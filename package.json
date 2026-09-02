@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "taildev --port 5173 -- bun --hot src/server.ts",
+    "dev": "command -v taildev >/dev/null 2>&1 && exec taildev --port 5173 -- bun --hot src/server.ts || exec nix run github:gildrb/taildev/v0.1.0 -- --port 5173 -- bun --hot src/server.ts",
     "dev:local": "bun --hot src/server.ts",
     "build": "bun run scripts/build.ts",
     "preview": "NODE_ENV=production bun src/server.ts",

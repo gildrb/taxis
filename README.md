@@ -14,8 +14,9 @@ Tailscale network. `taildev` discovers the current machine and selects a free
 localhost backend port automatically; no hostname, IP address, credential, or
 secret is stored in this repository. Live reload uses the same private URL.
 
-`taildev` is installed on NixOS and macOS by the shared Nix configuration. On
-another Nix machine, run it without installing:
+`taildev` is installed on NixOS and macOS by the shared Nix configuration. If
+it is not installed yet, `bun run dev` automatically runs the public `v0.1.0`
+flake. The equivalent standalone command is:
 
 ```bash
 nix run github:gildrb/taildev -- --port 5173 -- bun --hot src/server.ts
