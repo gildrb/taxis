@@ -4,7 +4,7 @@ import { resolveAssetPath } from "./server-path";
 const production = process.env.NODE_ENV === "production";
 const configuredPort = process.env.PORT;
 const preferredPort = Number(configuredPort ?? 3000);
-const hostname = process.env.ORB_LAB_HOSTNAME;
+const hostname = process.env.PATTERN_LAB_HOSTNAME;
 
 if (!Number.isInteger(preferredPort) || preferredPort < 0 || preferredPort > 65_535) {
   throw new Error(`Invalid PORT: ${configuredPort}`);
@@ -48,4 +48,4 @@ if (configuredPort === undefined && server.port !== preferredPort) {
   console.warn(`Port ${preferredPort} is in use; using port ${server.port} instead.`);
 }
 
-console.log(`Orb Lab running at ${server.url}`);
+console.log(`Pattern Lab running at ${server.url}`);

@@ -33,7 +33,7 @@ async function waitForServerUrl(child: Bun.ReadableSubprocess, timeoutMs = 10_00
       const { done, value } = await reader.read();
       if (done) throw new Error(`Server exited before starting:\n${output}`);
       output += decoder.decode(value, { stream: true });
-      const match = output.match(/Orb Lab running at (http:\/\/[^\s]+)/);
+      const match = output.match(/Pattern Lab running at (http:\/\/[^\s]+)/);
       if (match?.[1]) return match[1];
     }
   } finally {

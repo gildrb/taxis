@@ -1,65 +1,79 @@
-export type OrbMode = "slices" | "dots" | "hybrid";
+export type PatternPreset = "bars" | "candles" | "shapes";
+export type PatternColorMode = "custom" | "monochrome" | "source";
+export type SourceFit = "contain" | "cover" | "stretch";
+export type SampleChannel = "auto" | "alpha" | "luminance";
 
-export interface OrbParams {
-  mode: OrbMode;
-  slices: number;
-  dots: number;
-  thickness: number;
-  spacing: number;
-  taper: number;
-  curvature: number;
-  threshold: number;
+export interface PatternParams {
+  preset: PatternPreset;
+  cellSize: number;
+  rowShift: number;
+  colorMode: PatternColorMode;
+  monoColor: string;
+  sourceBackground: number;
+  invert: boolean;
   contrast: number;
-  inversion: boolean;
-  crop: number;
-  palette: [string, string];
-  resolution: number;
-  seed: number;
-  breathing: number;
-  wave: number;
-  phase: number;
-  rotation: number;
-  noise: number;
-  pointer: number;
-  audio: number;
-  duration: number;
-  fps: number;
-}
-
-export interface MaskData {
+  luminanceBias: number;
+  colorCount: 2 | 3 | 4;
+  backgroundColor: string;
+  colors: [string, string, string, string];
+  transparent: boolean;
+  fit: SourceFit;
+  sampleChannel: SampleChannel;
+  scale: number;
+  offsetX: number;
+  offsetY: number;
   width: number;
   height: number;
-  values: Float32Array;
+}
+
+export interface SourceData {
+  width: number;
+  height: number;
+  pixels: Uint8ClampedArray;
   usesAlpha: boolean;
   name: string;
+  fingerprint: string;
+  dataUrl?: string;
+  kind?: "radial";
 }
 
 export interface RenderInput {
-  params: OrbParams;
-  mask: MaskData;
-  time: number;
-  pointer: readonly [number, number];
-  audio: number;
+  params: PatternParams;
+  source: SourceData;
 }
 
-export interface RectPrimitive {
-  kind: "rect";
+export interface PatternPrimitive {
   x: number;
   y: number;
   width: number;
   height: number;
-  radius: number;
   color: string;
   opacity: number;
 }
 
-export interface CirclePrimitive {
-  kind: "circle";
-  x: number;
-  y: number;
-  radius: number;
-  color: string;
-  opacity: number;
+export interface PatternFrame {
+  width: number;
+  height: number;
+  background: string | null;
+  primitives: PatternPrimitive[];
 }
 
-export type OrbPrimitive = RectPrimitive | CirclePrimitive;
+export interface SourceSample {
+  red: number;
+  green: number;
+  blue: number;
+  alpha: number;
+  value: number;
+}
+
+export interface PatternProject {
+  app: "Pattern Lab";
+  version: 1;
+  params: PatternParams;
+  source: {
+    name: string;
+    fingerprint: string;
+    dataUrl?: string;
+    kind?: "radial";
+  };
+}
