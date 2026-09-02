@@ -1,0 +1,32 @@
+{
+  "name": "orb-lab",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun --hot src/server.ts",
+    "dev:tailnet": "ORB_LAB_HOSTNAME=$(tailscale ip -4) PORT=5173 bun --hot src/server.ts",
+    "build": "bun run scripts/build.ts",
+    "preview": "NODE_ENV=production bun src/server.ts",
+    "shader:check": "bun scripts/validate-shader.ts",
+    "test:e2e": "playwright test",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test tests/geometry.test.ts tests/shader.test.ts tests/server-path.test.ts tests/server-start.test.ts",
+    "check": "bun run typecheck && bun run test && bun run build"
+  },
+  "dependencies": {
+    "motion": "latest",
+    "mp4-muxer": "latest",
+    "react": "latest",
+    "react-dom": "latest",
+    "vgpu": "latest"
+  },
+  "devDependencies": {
+    "@playwright/test": "latest",
+    "@types/bun": "latest",
+    "@types/react": "latest",
+    "@types/react-dom": "latest",
+    "@webgpu/types": "latest",
+    "typescript": "latest"
+  }
+}
