@@ -9,13 +9,26 @@ bun install
 bun run dev
 ```
 
-Open the URL printed in the terminal. The development server prefers `http://localhost:3000` and automatically uses the next free port. Set `PORT` to require one port.
+Open the Tailnet URL printed in the terminal from any device on the same
+Tailscale network. `taildev` discovers the current machine and selects a free
+localhost backend port automatically; no hostname, IP address, credential, or
+secret is stored in this repository. Live reload uses the same private URL.
 
-For another device on the same Tailscale network:
+`taildev` is installed on NixOS and macOS by the shared Nix configuration. On
+another Nix machine, run it without installing:
 
 ```bash
-bun run dev:tailnet
+nix run github:gildrb/taildev -- --port 5173 -- bun --hot src/server.ts
 ```
+
+For localhost-only development instead, run:
+
+```bash
+bun run dev:local
+```
+
+The local server prefers `http://localhost:3000` and automatically uses the
+next available port when it is occupied.
 
 For production validation:
 
@@ -31,4 +44,3 @@ bun run preview
 2. Pick **Horizontal**, **Vertical**, or **Shapes**. The included Sliced Sphere, Light Raster, and Dark Raster recipes reproduce the three main reference outcomes directly.
 3. Adjust cell size, fit, sampling, and palette. Every slider also has an exact numeric input.
 4. Export PNG, editable SVG, or **Project** JSON. Project files embed imported source images, parameters, and a stable scene fingerprint.
-

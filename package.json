@@ -4,8 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "bun --hot src/server.ts",
-    "dev:tailnet": "PATTERN_LAB_HOSTNAME=$(tailscale ip -4) PORT=5173 bun --hot src/server.ts",
+    "dev": "taildev --port 5173 -- bun --hot src/server.ts",
+    "dev:local": "bun --hot src/server.ts",
     "build": "bun run scripts/build.ts",
     "preview": "NODE_ENV=production bun src/server.ts",
     "test:e2e": "playwright test",
