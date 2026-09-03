@@ -39,12 +39,17 @@ ${output}`);
 }
 
 
-test("pins Bun while keeping the deployment lockfile backward-readable", async () => {
+test("pins Bun and publishes the standalone build through Vercel", async () => {
   const manifest = JSON.parse(await readFile(`${root}/package.json`, "utf8"));
   const lockfile = await readFile(`${root}/bun.lock`, "utf8");
+  const vercel = JSON.parse(await readFile(`${root}/vercel.json`, "utf8"));
   expect(manifest.packageManager).toBe("bun@1.4.0");
   expect(manifest.engines.bun).toBe("1.4.0");
   expect(lockfile).toContain('"lockfileVersion": 1');
+  expect(vercel.installCommand).toBe("bunx bun@1.4.0 install --frozen-lockfile");
+  expect(vercel.buildCommand).toBe("bunx bun@1.4.0 run build");
+  expect(vercel.outputDirectory).toBe("dist");
+  expect(vercel.rewrites).toEqual([{ source: "/(.*)", destination: "/index.html" }]);
 });
 
 test("writes complete atomic StyleX CSS across concurrent development starts", async () => {
