@@ -14,7 +14,7 @@ afterEach(async () => {
 function spawnServer(env: Record<string, string | undefined>) {
   const child = Bun.spawn(["bun", "src/server.ts"], {
     cwd: import.meta.dir.replace(/\/tests$/, ""),
-    env,
+    env: { ...env, PATTERN_LAB_HOSTNAME: "127.0.0.1" },
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -50,6 +50,7 @@ describe("development server ports", () => {
         blockers.push(
           Bun.serve({
             port: 3000,
+            hostname: "127.0.0.1",
             fetch: () => new Response("occupied"),
           }),
         );
@@ -74,6 +75,7 @@ describe("development server ports", () => {
   test("does not override an explicitly configured occupied port", async () => {
     const blocker = Bun.serve({
       port: 0,
+      hostname: "127.0.0.1",
       fetch: () => new Response("occupied"),
     });
     blockers.push(blocker);

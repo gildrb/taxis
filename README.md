@@ -4,8 +4,9 @@ Pattern Lab turns PNG, JPEG, WebP, AVIF, and SVG sources into deterministic line
 
 ## Run
 
+Use Bun 1.4.0. The text lockfile stays on format 1 so older deployment bootstrappers can parse it before they honor the pinned runtime.
+
 ```bash
 bun install
 bun run dev
 ```
-

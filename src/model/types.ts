@@ -68,12 +68,15 @@ export interface SourceSample {
 
 export interface PatternProject {
   app: "Pattern Lab";
-  version: 1;
+  version: 2;
+  fingerprint: string;
   params: PatternParams;
   source: {
     name: string;
     fingerprint: string;
+    usesAlpha: boolean;
     dataUrl?: string;
     kind?: "radial";
+    size?: number;
   };
 }

@@ -1,3 +1,4 @@
+import { fingerprintBytes, legacyFingerprintPixels } from "./fingerprint";
 import type { PatternParams, SourceData, SourceSample } from "./types";
 
 const MIME_TYPES = new Set([
@@ -8,6 +9,18 @@ const MIME_TYPES = new Set([
   "image/svg+xml",
 ]);
 
+const MAX_SOURCE_BYTES = 50 * 1024 * 1024;
+
+function imageTypeForName(name: string): string | undefined {
+  const extension = name.toLowerCase().match(/\.[^.]+$/)?.[0];
+  return extension === ".png" ? "image/png"
+    : extension === ".jpg" || extension === ".jpeg" ? "image/jpeg"
+      : extension === ".webp" ? "image/webp"
+        : extension === ".avif" ? "image/avif"
+          : extension === ".svg" ? "image/svg+xml"
+            : undefined;
+}
+
 export function isAcceptedImage(file: File): boolean {
   return MIME_TYPES.has(file.type) || /\.(png|jpe?g|webp|avif|svg)$/i.test(file.name);
 }
@@ -16,19 +29,29 @@ export async function fileToSource(file: File, maxDimension = 1600): Promise<Sou
   if (!isAcceptedImage(file)) {
     throw new Error("Use a PNG, JPEG, WebP, AVIF, or SVG file.");
   }
-  const dataUrl = await readAsDataUrl(file);
+  if (file.size > MAX_SOURCE_BYTES) throw new Error("Source images must be smaller than 50 MB.");
+  if (!Number.isFinite(maxDimension) || maxDimension < 1) throw new Error("Maximum source size must be at least 1 pixel.");
+  const canonicalType = imageTypeForName(file.name);
+  const decodableFile = canonicalType && !MIME_TYPES.has(file.type)
+    ? new File([file], file.name, { lastModified: file.lastModified, type: canonicalType })
+    : file;
   try {
-    const bitmap = await createImageBitmap(file);
+    const bitmap = await createImageBitmap(decodableFile);
     try {
-      return bitmapToSource(bitmap, file.name, maxDimension, dataUrl);
+      return bitmapToSource(bitmap, file.name, maxDimension, true);
     } finally {
       bitmap.close();
     }
   } catch {
-    const image = new Image();
-    image.src = dataUrl;
-    await image.decode();
-    return bitmapToSource(image, file.name, maxDimension, dataUrl);
+    const url = URL.createObjectURL(decodableFile);
+    try {
+      const image = new Image();
+      image.src = url;
+      await image.decode();
+      return bitmapToSource(image, file.name, maxDimension, true);
+    } finally {
+      URL.revokeObjectURL(url);
+    }
   }
 }
 
@@ -43,7 +66,7 @@ export function bitmapToSource(
   source: CanvasImageSource,
   name: string,
   maxDimension = 1600,
-  dataUrl?: string,
+  embed = false,
 ): SourceData {
   const dimensions = sourceDimensions(source);
   if (!Number.isFinite(dimensions.width) || !Number.isFinite(dimensions.height) || dimensions.width <= 0 || dimensions.height <= 0) {
@@ -61,12 +84,17 @@ export function bitmapToSource(
   context.drawImage(source, 0, 0, width, height);
   const pixels = context.getImageData(0, 0, width, height).data;
   let transparent = 0;
+  let minimumAlpha = 255;
+  let maximumAlpha = 0;
   for (let index = 3; index < pixels.length; index += 4) {
-    if ((pixels[index] ?? 255) < 250) transparent++;
+    const alpha = pixels[index] ?? 255;
+    if (alpha < 250) transparent++;
+    minimumAlpha = Math.min(minimumAlpha, alpha);
+    maximumAlpha = Math.max(maximumAlpha, alpha);
   }
-  // Small antialiased or rounded-corner transparency must not erase interior luminance detail.
-  // Alpha is the automatic signal only when transparency is a meaningful part of the artwork.
-  const usesAlpha = transparent > width * height * 0.1;
+  // Ignore uniform opacity and small antialiased corners. Auto alpha is useful only
+  // when transparency both covers meaningful area and carries a varying signal.
+  const usesAlpha = transparent > width * height * 0.1 && maximumAlpha - minimumAlpha >= 16;
   return {
     width,
     height,
@@ -74,11 +102,14 @@ export function bitmapToSource(
     usesAlpha,
     name,
     fingerprint: fingerprintPixels(width, height, pixels),
-    ...(dataUrl ? { dataUrl: canvas.toDataURL("image/png") } : {}),
+    ...(embed ? { dataUrl: canvas.toDataURL("image/png") } : {}),
   };
 }
 
 export function createRadialSource(size = 512): SourceData {
+  if (!Number.isInteger(size) || size < 1 || size > 4096) {
+    throw new Error("Generated source size must be an integer from 1 to 4096 pixels.");
+  }
   const pixels = new Uint8ClampedArray(size * size * 4);
   for (let y = 0; y < size; y++) {
     for (let x = 0; x < size; x++) {
@@ -142,24 +173,19 @@ export function sampleSource(
   return { red, green, blue, alpha, value: channel === "alpha" ? alpha : luminance };
 }
 
-export function fingerprintPixels(width: number, height: number, pixels: Uint8ClampedArray): string {
-  let hash = 2_166_136_261;
-  hash = Math.imul(hash ^ width, 16_777_619);
-  hash = Math.imul(hash ^ height, 16_777_619);
-  for (let index = 0; index < pixels.length; index++) {
-    hash = Math.imul(hash ^ (pixels[index] ?? 0), 16_777_619);
+export function legacyUsesAlpha(pixels: Uint8ClampedArray): boolean {
+  let transparent = 0;
+  for (let index = 3; index < pixels.length; index += 4) {
+    if ((pixels[index] ?? 255) < 250) transparent++;
   }
-  return (hash >>> 0).toString(16).padStart(8, "0");
+  return transparent > pixels.length / 4 * 0.1;
 }
 
-function readAsDataUrl(file: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result));
-    reader.onerror = () => reject(new Error("The source image could not be read."));
-    reader.readAsDataURL(file);
-  });
+export function fingerprintPixels(width: number, height: number, pixels: Uint8ClampedArray): string {
+  return fingerprintBytes(pixels, width, height);
 }
+
+export { legacyFingerprintPixels };
 
 function sourceDimensions(source: CanvasImageSource): { width: number; height: number } {
   if (source instanceof HTMLImageElement) {

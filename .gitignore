@@ -1,6 +1,14 @@
 node_modules/
-dist/
+/dist
 test-results/
 playwright-report/
 *.log
 .DS_Store
+.stylex/
+.build.lock/
+.build-output-*
+.build-releases/
+.preview-current
+.preview-link-*
+.dist-output-*
+.dist-backup-*

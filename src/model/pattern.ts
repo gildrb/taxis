@@ -1,5 +1,5 @@
 import { sampleSource } from "./source";
-import { projectFingerprint } from "./params";
+import { canonicalizePatternParams, projectFingerprint } from "./params";
 import type {
   PatternFrame,
   PatternParams,
@@ -36,6 +36,9 @@ const SHAPE_PATTERNS: readonly (readonly UnitRect[])[] = [
   [[0, 0, 0.5, 0.5], [0.5, 0.5, 0.5, 0.5]],
 ];
 
+const MAX_CELLS = 250_000;
+const MAX_PRIMITIVES = 25_000;
+
 export function generatePattern(input: RenderInput): PatternFrame {
   const { params } = input;
   const patterns = params.preset === "bars"
@@ -45,8 +48,14 @@ export function generatePattern(input: RenderInput): PatternFrame {
       : SHAPE_PATTERNS;
   const columns = Math.ceil(params.width / params.cellSize);
   const rows = Math.ceil(params.height / params.cellSize);
-  if (columns * rows > 250_000) {
+  const cellCount = columns * rows;
+  if (cellCount > MAX_CELLS) {
     throw new Error("This output has more than 250,000 cells. Increase Cell Size before rendering.");
+  }
+  const maximumPatternRects = Math.max(...patterns.map((pattern) => pattern.length));
+  const maximumRectsPerCell = maximumPatternRects + (params.colorMode === "source" && params.sourceBackground > 0 ? 1 : 0);
+  if (cellCount * maximumRectsPerCell > MAX_PRIMITIVES) {
+    throw new Error("This output can create more than 25,000 shapes. Increase Cell Size before rendering.");
   }
   const primitives: PatternPrimitive[] = [];
   const background = params.transparent
@@ -57,9 +66,12 @@ export function generatePattern(input: RenderInput): PatternFrame {
 
   for (let y = 0; y < params.height; y += params.cellSize) {
     const row = Math.floor(y / params.cellSize);
+    const visibleHeight = Math.min(params.cellSize, params.height - y);
     const sourceShift = params.preset === "bars" ? staggerForRow(row) * params.rowShift : 0;
     for (let x = 0; x < params.width; x += params.cellSize) {
-      const sample = sampleSource(input.source, x + params.cellSize / 2 - sourceShift, y + params.cellSize / 2, params);
+      const visibleWidth = Math.min(params.cellSize, params.width - x);
+      const sample = sampleSource(input.source, x + visibleWidth / 2 - sourceShift, y + visibleHeight / 2, params);
+      if (sample.alpha <= 0) continue;
       const value = adjustedValue(sample, params);
       const patternIndex = Math.min(patterns.length - 1, Math.floor(value * (patterns.length - 1)));
       const pattern = patterns[patternIndex] ?? patterns[0]!;
@@ -99,29 +111,42 @@ export function generatePattern(input: RenderInput): PatternFrame {
 
 export function patternToSvg(input: RenderInput): string {
   const frame = generatePattern(input);
-  const metadata = escapeXml(JSON.stringify(projectFor(input)));
+  const project = projectFor(input);
+  const metadata = escapeXml(JSON.stringify({
+    ...project,
+    source: {
+      name: project.source.name,
+      fingerprint: project.source.fingerprint,
+      usesAlpha: project.source.usesAlpha,
+      ...(project.source.kind ? { kind: project.source.kind, size: project.source.size } : {}),
+    },
+  }));
   const background = frame.background
     ? `  <rect width="${frame.width}" height="${frame.height}" fill="${frame.background}"/>\n`
     : "";
-  const shapes = frame.primitives
-    .filter((shape) => shape.opacity > 0 && shape.width > 0 && shape.height > 0)
-    .map((shape) => `  <rect x="${format(shape.x)}" y="${format(shape.y)}" width="${format(shape.width)}" height="${format(shape.height)}" fill="${shape.color}"${shape.opacity < 1 ? ` opacity="${format(shape.opacity)}"` : ""}/>`)
-    .join("\n");
+  const shapeElements: string[] = [];
+  for (const shape of frame.primitives) {
+    if (shape.opacity <= 0 || shape.width <= 0 || shape.height <= 0) continue;
+    shapeElements.push(`  <rect x="${format(shape.x)}" y="${format(shape.y)}" width="${format(shape.width)}" height="${format(shape.height)}" fill="${shape.color}"${shape.opacity < 1 ? ` opacity="${format(shape.opacity)}"` : ""}/>`);
+  }
+  const shapes = shapeElements.join("\n");
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${frame.width} ${frame.height}" width="${frame.width}" height="${frame.height}">\n  <metadata>${metadata}</metadata>\n${background}${shapes}\n</svg>\n`;
 }
 
-export function projectFor(input: RenderInput): PatternProject & { fingerprint: string } {
+export function projectFor(input: RenderInput): PatternProject {
   const { params, source } = input;
+  const canonicalParams = canonicalizePatternParams(params);
   return {
     app: "Pattern Lab",
-    version: 1,
-    fingerprint: projectFingerprint(params, source),
-    params: { ...params, colors: [...params.colors] },
+    version: 2,
+    fingerprint: projectFingerprint(canonicalParams, source),
+    params: canonicalParams,
     source: {
       name: source.name,
       fingerprint: source.fingerprint,
+      usesAlpha: source.usesAlpha,
       ...(source.dataUrl ? { dataUrl: source.dataUrl } : {}),
-      ...(source.kind ? { kind: source.kind } : {}),
+      ...(source.kind ? { kind: source.kind, size: source.width } : {}),
     },
   };
 }
@@ -157,7 +182,7 @@ function rgb(red: number, green: number, blue: number): string {
 }
 
 function format(value: number): string {
-  return Number(value.toFixed(4)).toString();
+  return Number(value.toFixed(12)).toString();
 }
 
 function clamp01(value: number): number {

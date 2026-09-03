@@ -5,24 +5,31 @@
   "type": "module",
   "scripts": {
     "dev": "command -v taildev >/dev/null 2>&1 && exec taildev --port 5173 -- bun --hot src/server.ts || exec nix run github:gildrb/taildev/v0.1.0 -- --port 5173 -- bun --hot src/server.ts",
-    "dev:local": "bun --hot src/server.ts",
+    "dev:local": "NODE_ENV=development bun --hot src/server.ts",
+    "dev:tailnet": "NODE_ENV=development bun run scripts/dev-tailnet.ts",
     "build": "bun run scripts/build.ts",
     "preview": "NODE_ENV=production bun src/server.ts",
     "test:e2e": "playwright test",
     "typecheck": "tsc --noEmit",
-    "test": "bun test tests/pattern.test.ts tests/server-path.test.ts tests/server-start.test.ts",
+    "test": "bun test tests/pattern.test.ts tests/server-path.test.ts tests/server-start.test.ts tests/tooling.test.ts",
     "check": "bun run typecheck && bun run test && bun run build"
   },
   "dependencies": {
+    "@stylexjs/stylex": "^0.19.0",
     "react": "latest",
     "react-dom": "latest"
   },
   "devDependencies": {
     "@playwright/test": "latest",
+    "@stylexjs/unplugin": "^0.19.0",
     "@types/bun": "latest",
     "@types/react": "latest",
     "@types/react-dom": "latest",
     "typescript": "latest"
   },
-  "description": "Deterministic image-to-pattern texture editor"
+  "description": "Deterministic image-to-pattern texture editor",
+  "packageManager": "bun@1.4.0",
+  "engines": {
+    "bun": "1.4.0"
+  }
 }

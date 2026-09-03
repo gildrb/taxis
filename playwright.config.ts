@@ -12,8 +12,8 @@ export default defineConfig({
       : undefined,
   },
   webServer: {
-    command: "PORT=4173 bun run dev",
+    command: "NODE_ENV=development PATTERN_LAB_HOSTNAME=127.0.0.1 PORT=4173 bun run dev:local",
     url: "http://127.0.0.1:4173",
-    reuseExistingServer: true,
+    reuseExistingServer: false,
   },
 });
