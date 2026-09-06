@@ -19,7 +19,7 @@ export const selectStyles = stylex.create({
   },
   label: {
     color: colors.textSecondary,
-    fontSize: 11,
+    fontSize: 14,
   },
   trigger: {
     minWidth: 118,
@@ -39,7 +39,7 @@ export const selectStyles = stylex.create({
     borderRadius: 6,
     color: { default: colors.textSecondary, ":hover": colors.text },
     backgroundColor: { default: "#1d1d20", ":hover": colors.surfaceHover },
-    fontSize: { default: 10, "@media (max-width: 900px)": 16 },
+    fontSize: { default: 14, "@media (max-width: 900px)": 16 },
     textAlign: "left",
   },
   stackedTrigger: {
@@ -85,7 +85,7 @@ export const selectStyles = stylex.create({
     paddingLeft: 8,
     borderRadius: 5,
     color: colors.textSecondary,
-    fontSize: { default: 11, "@media (max-width: 900px)": 14 },
+    fontSize: { default: 14, "@media (max-width: 900px)": 14 },
     cursor: "pointer",
   },
   activeOption: {

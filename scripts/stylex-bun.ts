@@ -63,7 +63,7 @@ ${css}` : ":root { --stylex-injection: 0; }";
 }
 
 export default {
-  name: "pattern-lab-stylex-bun",
+  name: "taxis-stylex-bun",
   setup(build: any) {
     build.onStart(async () => {
       // Bun reuses transformed modules between incremental page builds. Resetting

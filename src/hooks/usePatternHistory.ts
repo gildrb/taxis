@@ -14,24 +14,29 @@ interface HistoryState {
 }
 
 const HISTORY_LIMIT = 40;
-const HISTORY_SOURCE_BUDGET = 96 * 1024 * 1024;
+const HISTORY_MEMORY_BUDGET = 96 * 1024 * 1024;
+const parameterMemory = new WeakMap<PatternParams, number>();
 
 function appendHistory(past: SceneState[], scene: SceneState): SceneState[] {
   const candidates = [...past, scene].slice(-HISTORY_LIMIT);
   const sources = new Set<SourceData>();
   const kept: SceneState[] = [];
-  let sourceBytes = 0;
+  let keptBytes = 0;
   for (let index = candidates.length - 1; index >= 0; index--) {
     const candidate = candidates[index]!;
     const isNewSource = !sources.has(candidate.source);
-    const nextBytes = isNewSource
-      ? candidate.source.pixels.byteLength + (candidate.source.dataUrl?.length ?? 0) * 2 + (candidate.source.vectorMask ? JSON.stringify(candidate.source.vectorMask).length * 2 : 0)
-      : 0;
-    if (kept.length > 0 && sourceBytes + nextBytes > HISTORY_SOURCE_BUDGET) break;
-    if (isNewSource) {
-      sources.add(candidate.source);
-      sourceBytes += nextBytes;
+    let parameterBytes = parameterMemory.get(candidate.params);
+    if (parameterBytes === undefined) {
+      // Include keyframe/override objects, not only image bytes, in the history budget.
+      parameterBytes = JSON.stringify(candidate.params).length * 4;
+      parameterMemory.set(candidate.params, parameterBytes);
     }
+    const nextBytes = parameterBytes + (isNewSource
+      ? candidate.source.pixels.byteLength + (candidate.source.dataUrl?.length ?? 0) * 2 + (candidate.source.vectorMask ? JSON.stringify(candidate.source.vectorMask).length * 2 : 0)
+      : 0);
+    if (kept.length > 0 && keptBytes + nextBytes > HISTORY_MEMORY_BUDGET) break;
+    if (isNewSource) sources.add(candidate.source);
+    keptBytes += nextBytes;
     kept.push(candidate);
   }
   return kept.reverse();

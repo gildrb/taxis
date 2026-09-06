@@ -1,20 +1,24 @@
 import { expect, test } from "@playwright/test";
 import { readFile } from "node:fs/promises";
+import { downloadExport } from "./export";
+import { chooseOption } from "./menu";
 
 test("renders the editor shell and edits one deterministic scene", async ({ page }) => {
   await page.goto("/");
-  await expect(page).toHaveTitle(/Pattern Lab/);
+  await expect(page).toHaveTitle(/Taxis/);
   await expect(page.getByLabel("Pattern canvas")).toBeVisible();
   await expect(page.getByLabel("Layers")).toBeVisible();
   await expect(page.getByLabel("Properties")).toBeVisible();
-  await expect(page.getByRole("button", { name: "Horizontal", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByLabel("Pattern preview, 1500 by 1500 pixels")).toBeVisible();
+  await expect(page.getByRole("checkbox", { name: "Use cells", exact: true })).toBeChecked();
+  await expect(page.getByRole("combobox", { name: "Cell shape", exact: true })).toHaveText("Square");
 
-  const fingerprint = page.getByTestId("fingerprint");
-  const initialFingerprint = await fingerprint.textContent();
+  await page.waitForFunction(() => Boolean(window.taxis));
+  const initialFingerprint = await page.evaluate(() => window.taxis.getScene().fingerprint);
   const cellSize = page.getByRole("slider", { name: "Cell Size" });
   await cellSize.fill("28");
   await expect(cellSize).toHaveValue("28");
-  await expect(fingerprint).not.toHaveText(initialFingerprint ?? "");
+  await expect.poll(() => page.evaluate(() => window.taxis.getScene().fingerprint)).not.toBe(initialFingerprint);
   await page.getByRole("button", { name: "Undo" }).click();
   await expect(cellSize).toHaveValue("48");
   await page.getByRole("button", { name: "Redo" }).click();
@@ -85,25 +89,33 @@ test("keeps pending numeric edits separate from range and color transactions", a
   await expect(color).toHaveValue("#f7f6f3");
 });
 
-test("offers the three reference pattern outcomes as direct recipes", async ({ page }) => {
+test("offers continuous reference patterns and independent column-wave cells as direct recipes", async ({ page }) => {
   await page.goto("/");
-  await page.getByRole("button", { name: /Light Raster/ }).click();
+  await chooseOption(page, "Recipe", "Light Raster");
   await expect(page.getByRole("button", { name: "Vertical", exact: true })).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByRole("slider", { name: "Cell Size" })).toHaveValue("12");
 
-  await page.getByRole("button", { name: /Dark Raster/ }).click();
-  await expect(page.getByRole("slider", { name: "Cell Size" })).toHaveValue("28");
+  await chooseOption(page, "Recipe", "Column Wave");
+  await expect(page.getByRole("checkbox", { name: "Use cells", exact: true })).toBeChecked();
+  await expect(page.getByRole("combobox", { name: "Cell shape", exact: true })).toHaveText("Square");
+  await expect(page.getByRole("slider", { name: "Cell Size" })).toHaveValue("48");
+  expect((await page.evaluate(() => window.taxis.getScene())).params).toMatchObject({
+    useCells: true, sourceMode: "ignore", cellShape: "square", cellGapX: 12, cellGapY: 12, cellPadding: 4,
+    animation: "wave", animationAxis: "y", animationDuration: 4, animationAmount: 0.5,
+    animationStaggerBy: "column", animationStagger: 0.1, animationTime: 0, animationPhase: 0, cellAnimations: [],
+  });
+  await expect(page.getByRole("button", { name: "Play", exact: true })).toBeVisible();
 
-  await page.getByRole("button", { name: /Sliced Sphere/ }).click();
+  await chooseOption(page, "Recipe", "Sliced Sphere");
   await expect(page.getByRole("button", { name: "Horizontal", exact: true })).toHaveAttribute("aria-pressed", "true");
 });
 
 
 test("fills a resized canvas instead of containing the pattern in the old source aspect", async ({ page }) => {
-  await page.goto("/");
+  await page.goto(`/?settings=${encodeURIComponent(JSON.stringify({ useCells: false }))}`);
   await page.getByRole("button", { name: /Source Generated sphere/ }).click();
   await page.getByRole("button", { name: "contain", exact: true }).click();
-  await page.getByRole("button", { name: /Canvas 720 × 720/ }).click();
+  await page.getByRole("button", { name: /Canvas 1500 × 1500/ }).click();
   await page.getByRole("switch", { name: "Transparent" }).click();
   for (const [name, value] of [["Width", "1920"], ["Height", "1080"]] as const) {
     const input = page.getByRole("spinbutton", { name });
@@ -130,7 +142,7 @@ test("fills a resized canvas instead of containing the pattern in the old source
     return [minimum, maximum];
   })).toEqual([0, 1919]);
   await page.getByRole("button", { name: /Pattern Horizontal raster/ }).click();
-  await page.getByRole("button", { name: /Light Raster/ }).click();
+  await chooseOption(page, "Recipe", "Light Raster");
   await expect(page.getByLabel("Pattern preview, 1920 by 1080 pixels")).toBeVisible();
 });
 
@@ -146,12 +158,12 @@ test("preserves a non-square source and exposes fit controls", async ({ page }) 
   await expect(sourceInput).toHaveValue("");
   await expect(page.getByLabel("Pattern preview, 400 by 100 pixels")).toBeVisible();
   await page.getByRole("button", { name: "Undo" }).click();
-  await expect(page.getByLabel("Pattern preview, 720 by 720 pixels")).toBeVisible();
+  await expect(page.getByLabel("Pattern preview, 1500 by 1500 pixels")).toBeVisible();
   await page.getByRole("button", { name: "Redo" }).click();
   await expect(page.getByLabel("Pattern preview, 400 by 100 pixels")).toBeVisible();
   await page.getByRole("slider", { name: "Cell Size" }).fill("20");
   await expect(page.getByRole("button", { name: /Source wide\.svg/ })).toBeVisible();
-  await page.getByRole("button", { name: /Sliced Sphere/ }).click();
+  await chooseOption(page, "Recipe", "Sliced Sphere");
   await expect(page.getByRole("button", { name: /Source wide\.svg/ })).toBeVisible();
   await expect(page.getByLabel("Pattern preview, 400 by 100 pixels")).toBeVisible();
   await page.getByRole("button", { name: "Undo" }).click();
@@ -159,45 +171,37 @@ test("preserves a non-square source and exposes fit controls", async ({ page }) 
   await page.getByRole("button", { name: /Source wide\.svg/ }).click();
   await expect(page.getByTestId("source-summary").getByText(/400 × 100/)).toBeVisible();
   await expect(page.getByRole("button", { name: "cover", exact: true })).toBeVisible();
-  await expect(page.getByText(/original aspect ratio/)).toBeVisible();
 
-  const fingerprint = await page.getByTestId("fingerprint").textContent();
-  const pending = page.waitForEvent("download");
-  await page.getByRole("button", { name: "Export Project", exact: true }).click();
-  const projectPath = await (await pending).path();
+  await page.waitForFunction(() => Boolean(window.taxis));
+  const fingerprint = await page.evaluate(() => window.taxis.getScene().fingerprint);
+  const projectPath = await (await downloadExport(page, "json")).path();
   await page.getByRole("button", { name: "Reset project" }).click();
-  await expect(page.getByLabel("Pattern preview, 720 by 720 pixels")).toBeVisible();
+  await expect(page.getByLabel("Pattern preview, 1500 by 1500 pixels")).toBeVisible();
   const projectInput = page.locator('input[type="file"][accept*=".json"]');
   await projectInput.setInputFiles(projectPath!);
   await expect(projectInput).toHaveValue("");
   await expect(page.getByLabel("Pattern preview, 400 by 100 pixels")).toBeVisible();
-  await expect(page.getByTestId("fingerprint")).toHaveText(fingerprint ?? "");
+  await expect.poll(() => page.evaluate(() => window.taxis?.getScene().fingerprint)).toBe(fingerprint);
 });
 
 test("exports matching SVG, PNG, and restorable project data", async ({ page }) => {
   await page.goto("/");
 
-  const svgPending = page.waitForEvent("download");
-  await page.getByRole("button", { name: "SVG", exact: true }).click();
-  const svgPath = await (await svgPending).path();
+  const svgPath = await (await downloadExport(page, "svg")).path();
   const svg = await readFile(svgPath!, "utf8");
-  expect(svg).toContain('viewBox="0 0 720 720"');
+  expect(svg).toContain('viewBox="0 0 1500 1500"');
   expect(svg).toContain("<metadata>");
   expect(svg).not.toContain("<image");
 
-  const pngPending = page.waitForEvent("download");
-  await page.getByRole("button", { name: /Export PNG/ }).click();
-  const pngPath = await (await pngPending).path();
+  const pngPath = await (await downloadExport(page, "png")).path();
   const png = await readFile(pngPath!);
   expect([...png.subarray(1, 4)]).toEqual([80, 78, 71]);
-  expect(png.readUInt32BE(16)).toBe(720);
-  expect(png.readUInt32BE(20)).toBe(720);
+  expect(png.readUInt32BE(16)).toBe(1500);
+  expect(png.readUInt32BE(20)).toBe(1500);
 
-  const jsonPending = page.waitForEvent("download");
-  await page.getByRole("button", { name: "Export Project", exact: true }).click();
-  const jsonPath = await (await jsonPending).path();
+  const jsonPath = await (await downloadExport(page, "json")).path();
   const project = JSON.parse(await readFile(jsonPath!, "utf8"));
-  expect(project.app).toBe("Pattern Lab");
+  expect(project.app).toBe("Taxis");
   expect(project.version).toBe(3);
   expect(project.fingerprint).toMatch(/^[0-9a-f]{16}$/);
   expect(project.source.kind).toBe("radial");
@@ -205,10 +209,9 @@ test("exports matching SVG, PNG, and restorable project data", async ({ page }) 
 
 test("rejects unsupported or malformed project envelopes without changing the scene", async ({ page }) => {
   await page.goto("/");
-  const initialFingerprint = await page.getByTestId("fingerprint").textContent();
-  const pending = page.waitForEvent("download");
-  await page.getByRole("button", { name: "Export Project", exact: true }).click();
-  const projectPath = await (await pending).path();
+  await page.waitForFunction(() => Boolean(window.taxis));
+  const initialFingerprint = await page.evaluate(() => window.taxis.getScene().fingerprint);
+  const projectPath = await (await downloadExport(page, "json")).path();
   const project = JSON.parse(await readFile(projectPath!, "utf8"));
   const projectInput = page.locator('input[name="project-file"]');
 
@@ -218,7 +221,7 @@ test("rejects unsupported or malformed project envelopes without changing the sc
     buffer: Buffer.from(JSON.stringify({ ...project, version: 4 })),
   });
   await expect(page.locator('[role="status"][aria-live]')).toContainText("version is not supported");
-  await expect(page.getByTestId("fingerprint")).toHaveText(initialFingerprint ?? "");
+  await expect.poll(() => page.evaluate(() => window.taxis?.getScene().fingerprint)).toBe(initialFingerprint);
 
   await projectInput.setInputFiles({
     name: "malformed.json",
@@ -227,7 +230,7 @@ test("rejects unsupported or malformed project envelopes without changing the sc
   });
   await expect(page.locator('[role="status"][aria-live]')).toContainText("image data URL");
   await expect(projectInput).toHaveValue("");
-  await expect(page.getByTestId("fingerprint")).toHaveText(initialFingerprint ?? "");
+  await expect.poll(() => page.evaluate(() => window.taxis?.getScene().fingerprint)).toBe(initialFingerprint);
 });
 
 test("decodes accepted SVG extensions with a generic MIME type", async ({ page }) => {
@@ -279,7 +282,7 @@ test("keeps the canvas and bottom-sheet controls usable on mobile", async ({ pag
   await expect(page.getByRole("combobox", { name: "Sample", exact: true })).toBeVisible();
   await page.getByRole("tab", { name: "Canvas", exact: true }).click();
   await expect(page.getByLabel("Width")).toBeVisible();
-  await expect(page.getByRole("button", { name: /Export PNG/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Export", exact: true })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   for (const viewport of [{ width: 390, height: 844 }, { width: 375, height: 667 }]) {
     await page.setViewportSize(viewport);
@@ -307,7 +310,7 @@ test("keeps newer recipe edits when an older source decode completes", async ({ 
   await page.goto("/");
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="400" height="100"><rect width="400" height="100" fill="white"/></svg>`;
   await page.locator('input[name="source-image"]').setInputFiles({ name: "slow.svg", mimeType: "image/svg+xml", buffer: Buffer.from(svg) });
-  await page.getByRole("button", { name: /Sliced Sphere/ }).click();
+  await chooseOption(page, "Recipe", "Sliced Sphere");
   await expect(page.getByRole("button", { name: /Source slow\.svg/ })).toBeVisible();
   await expect(page.getByLabel("Pattern preview, 400 by 100 pixels")).toBeVisible();
   await expect(page.getByRole("slider", { name: "Contrast" })).toHaveValue("1.4");
@@ -344,8 +347,8 @@ test("rebases an in-flight source import around a slider transaction", async ({ 
 });
 
 test("keeps the last successful preview honest while settings exceed the shape guard", async ({ page }) => {
-  await page.goto("/");
-  await page.getByRole("button", { name: /Canvas 720 × 720/ }).click();
+  await page.goto(`/?settings=${encodeURIComponent(JSON.stringify({ useCells: false }))}`);
+  await page.getByRole("button", { name: /Canvas 1500 × 1500/ }).click();
   const width = page.getByRole("spinbutton", { name: "Width" });
   const height = page.getByRole("spinbutton", { name: "Height" });
   await width.fill("1600");
@@ -360,9 +363,11 @@ test("keeps the last successful preview honest while settings exceed the shape g
   await height.press("Enter");
   await expect(page.getByRole("alert")).toContainText("25,000 shapes");
   await expect(page.getByLabel("Pattern preview, 1600 by 400 pixels")).toBeVisible();
-  const png = page.getByRole("button", { name: /Export PNG/ });
-  await expect(png).toHaveAttribute("aria-disabled", "true");
-  await png.click({ force: true });
+  await page.getByRole("button", { name: "Export", exact: true }).click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog.getByRole("radio", { name: "PNG", exact: true })).toBeDisabled();
+  await expect(dialog.locator('button[type="submit"]')).toBeDisabled();
+  await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
   await height.fill("400");
   await height.press("Enter");
   await expect(page.getByRole("alert")).toHaveCount(0);
@@ -406,12 +411,10 @@ test("keeps short-landscape feedback and controls in natural document flow", asy
 
 test("keeps export focus and restores the real notice trigger", async ({ page }) => {
   await page.goto("/");
-  const pngButton = page.getByRole("button", { name: /Export PNG/ });
-  await pngButton.focus();
-  const pending = page.waitForEvent("download");
-  await pngButton.click();
-  await pending;
-  await expect(pngButton).toBeFocused();
+  const exportButton = page.getByRole("button", { name: "Export", exact: true });
+  await exportButton.focus();
+  await downloadExport(page, "png");
+  await expect(exportButton).toBeFocused();
 
   const reset = page.getByRole("button", { name: "Reset project" });
   await reset.click();
@@ -447,7 +450,7 @@ test("restores settings, panel, and zoom through URL history", async ({ page }) 
   await expect(page.getByLabel("Canvas zoom")).toHaveText("100%");
   await expect(page.getByTestId("source-summary")).toBeVisible();
   await page.goBack();
-  await expect(page.getByRole("button", { name: /Pattern Horizontal raster/ })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByRole("button", { name: /Pattern square cells/ })).toHaveAttribute("aria-pressed", "true");
   await expect(cell).toHaveValue("28");
   await page.reload();
   await expect(cell).toHaveValue("28");
@@ -502,11 +505,11 @@ test("canonicalizes arbitrary linked zoom and warns without rewriting malformed 
   await expect(page.getByLabel("Canvas zoom")).toHaveText("60%");
 
   await page.goto("/?settings=%7Bbad");
-  await expect(page.locator('[role="status"][aria-live]')).toContainText("does not contain valid Pattern Lab settings");
+  await expect(page.locator('[role="status"][aria-live]')).toContainText("does not contain valid Taxis settings");
   expect(new URL(page.url()).searchParams.get("settings")).toBe("{bad");
 
   await page.goto("/?settings=%7Bbad&source=0123456789abcdef&sourceAlpha=1");
-  await expect(page.locator('[role="status"][aria-live]')).toContainText("does not contain valid Pattern Lab settings");
+  await expect(page.locator('[role="status"][aria-live]')).toContainText("does not contain valid Taxis settings");
   await expect(page.locator('[role="status"][aria-live]')).not.toContainText("settings were restored");
 });
 
@@ -516,7 +519,8 @@ test("keeps legacy linked alpha policy unknown until transparent pixels recover"
   const transparent = `<svg xmlns="http://www.w3.org/2000/svg" width="400" height="200"><rect width="200" height="200" fill="white" fill-opacity="0"/><rect x="200" width="200" height="200" fill="white"/></svg>`;
   await page.locator('input[name="source-image"]').setInputFiles({ name: "transparent.svg", mimeType: "image/svg+xml", buffer: Buffer.from(transparent) });
   await expect.poll(() => new URL(page.url()).searchParams.get("sourceAlpha")).toBe("1");
-  const fingerprint = await page.getByTestId("fingerprint").textContent();
+  await page.waitForFunction(() => Boolean(window.taxis));
+  const fingerprint = await page.evaluate(() => window.taxis.getScene().fingerprint);
   const legacyUrl = new URL(page.url());
   legacyUrl.searchParams.delete("sourceAlpha");
   page.on("dialog", (dialog) => void dialog.accept());
@@ -528,23 +532,25 @@ test("keeps legacy linked alpha policy unknown until transparent pixels recover"
 
   await page.locator('input[name="source-image"]').setInputFiles({ name: "transparent.svg", mimeType: "image/svg+xml", buffer: Buffer.from(transparent) });
   await expect.poll(() => new URL(page.url()).searchParams.get("sourceAlpha")).toBe("1");
-  await expect(page.getByTestId("fingerprint")).toHaveText(fingerprint ?? "");
+  await expect.poll(() => page.evaluate(() => window.taxis?.getScene().fingerprint)).toBe(fingerprint);
 });
 
 
 test("restores a linked generated-source alpha policy without requesting a file", async ({ page }) => {
   await page.goto("/");
   await expect.poll(() => new URL(page.url()).searchParams.get("source")).not.toBeNull();
-  const defaultFingerprint = await page.getByTestId("fingerprint").textContent();
+  await page.waitForFunction(() => Boolean(window.taxis));
+  const defaultFingerprint = await page.evaluate(() => window.taxis.getScene().fingerprint);
   const alphaUrl = new URL(page.url());
   alphaUrl.searchParams.set("sourceAlpha", "1");
   await page.goto(alphaUrl.toString());
   await expect(page.getByRole("button", { name: /Source Generated sphere/ })).toBeVisible();
   await expect(page.locator('[role="status"][aria-live]')).toHaveCount(0);
-  const alphaFingerprint = await page.getByTestId("fingerprint").textContent();
+  await page.waitForFunction(() => Boolean(window.taxis));
+  const alphaFingerprint = await page.evaluate(() => window.taxis.getScene().fingerprint);
   expect(alphaFingerprint).not.toBe(defaultFingerprint);
   await page.reload();
-  await expect(page.getByTestId("fingerprint")).toHaveText(alphaFingerprint ?? "");
+  await expect.poll(() => page.evaluate(() => window.taxis?.getScene().fingerprint)).toBe(alphaFingerprint);
   expect(new URL(page.url()).searchParams.get("sourceAlpha")).toBe("1");
 });
 

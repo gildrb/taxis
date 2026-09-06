@@ -8,6 +8,9 @@ import type { PatternParams, RenderInput, SourceData } from "../src/model/types"
 function params(overrides: Partial<PatternParams> = {}): PatternParams {
   return {
     ...DEFAULT_PARAMS,
+    useCells: false,
+    width: 720,
+    height: 720,
     ...overrides,
     colors: overrides.colors ? [...overrides.colors] : [...DEFAULT_PARAMS.colors],
   };

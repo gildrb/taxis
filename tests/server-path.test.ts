@@ -20,7 +20,7 @@ describe("production asset paths", () => {
   });
 
   test("rejects symlinks that resolve outside the asset root", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "pattern-lab-assets-"));
+    const directory = await mkdtemp(join(tmpdir(), "taxis-assets-"));
     const root = join(directory, "dist");
     const secret = join(directory, "secret.txt");
     await mkdir(root);

@@ -1,7 +1,29 @@
 import * as stylex from "@stylexjs/stylex";
-import { colors, fonts } from "./tokens.stylex";
+import { colors, fonts, layout } from "./tokens.stylex";
 
 export const previewStyles = stylex.create({
+  withTimeline: {
+    paddingBottom: {
+      default: `calc(84px + ${layout.timelineDockHeight} + ${layout.timelineDockGap})`,
+      "@media (min-height: 521px) and (min-width: 521px) and (max-width: 900px)": "calc(43dvh + 92px)",
+      "@media (min-height: 521px) and (max-width: 520px)": "calc(46dvh + 90px)",
+      "@media (max-width: 900px) and (max-height: 520px)": 8,
+    },
+  },
+  infoWithTimeline: {
+    bottom: {
+      default: `calc(67px + ${layout.timelineDockHeight} + ${layout.timelineDockGap})`,
+      "@media (min-width: 521px) and (max-width: 900px)": "calc(43dvh + 75px)",
+      "@media (max-width: 520px)": "calc(46dvh + 72px)",
+    },
+  },
+  sourceWithTimeline: {
+    bottom: {
+      default: `calc(62px + ${layout.timelineDockHeight} + ${layout.timelineDockGap})`,
+      "@media (min-width: 521px) and (max-width: 900px)": "calc(43dvh + 61px)",
+      "@media (max-width: 520px)": "calc(46dvh + 58px)",
+    },
+  },
   stage: {
     position: {
       default: "absolute",
@@ -49,8 +71,8 @@ export const previewStyles = stylex.create({
     },
     paddingBottom: {
       default: 78,
-      "@media (min-height: 521px) and (min-width: 521px) and (max-width: 900px)": "calc(43dvh + 82px)",
-      "@media (min-height: 521px) and (max-width: 520px)": "calc(46dvh + 80px)",
+      "@media (min-height: 521px) and (min-width: 521px) and (max-width: 900px)": "calc(43dvh + 86px)",
+      "@media (min-height: 521px) and (max-width: 520px)": "calc(46dvh + 84px)",
       "@media (max-width: 900px) and (max-height: 520px)": 8,
     },
     paddingLeft: {
@@ -107,6 +129,11 @@ export const previewStyles = stylex.create({
     height: "100%",
     display: "block",
     objectFit: "contain",
+    outline: {
+      default: "none",
+      ":focus-visible": "2px solid rgba(255, 255, 255, 0.72)",
+    },
+    outlineOffset: -2,
   },
   canvasInfo: {
     position: "absolute",
@@ -125,10 +152,10 @@ export const previewStyles = stylex.create({
     },
     gap: 12,
     color: colors.textMuted,
-    fontFamily: fonts.mono,
-    fontSize: 9,
+    fontFamily: fonts.sans,
+    fontSize: 14,
     lineHeight: 1,
-    textTransform: "uppercase",
+    textTransform: "none",
   },
   changeSource: {
     position: "absolute",
@@ -172,7 +199,7 @@ export const previewStyles = stylex.create({
       default: "rgba(22, 22, 24, 0.8)",
       ":hover": colors.surface,
     },
-    fontSize: 9,
+    fontSize: 14,
     textOverflow: "ellipsis",
     whiteSpace: "nowrap",
     transition: "none",
@@ -213,11 +240,11 @@ export const previewStyles = stylex.create({
     gap: 9,
   },
   dropTitle: {
-    fontSize: 12,
+    fontSize: 14,
     fontWeight: 500,
   },
   dropDetail: {
     color: colors.textMuted,
-    fontSize: 9,
+    fontSize: 14,
   },
 });

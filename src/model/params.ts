@@ -1,10 +1,11 @@
 import { fingerprintText } from "./fingerprint";
 import { parseVectorMask } from "./svg-mask";
-import type { LayoutCellOverride, PatternParams, SourceData, VectorMask } from "./types";
+import type { CellAnimationOverride, LayoutCellOverride, PatternParams, SourceData, VectorMask } from "./types";
+import { CELL_ENTITY_ID_PATTERN, KEYFRAME_TRACKS_SCHEMA, compareCellTargets, parseKeyframeTracks } from "./keyframes";
 
 export const DEFAULT_PARAMS: PatternParams = {
   preset: "bars",
-  useCells: false,
+  useCells: true,
   cellShape: "square",
   cellSides: 6,
   cellGapX: 0,
@@ -29,8 +30,8 @@ export const DEFAULT_PARAMS: PatternParams = {
   scale: 1,
   offsetX: 0,
   offsetY: 0,
-  width: 720,
-  height: 720,
+  width: 1500,
+  height: 1500,
   rowShiftMode: "alternating",
   symmetry: "none",
   motifScale: 1,
@@ -70,6 +71,14 @@ export const DEFAULT_PARAMS: PatternParams = {
   sourceMode: "sample",
   sourceRotation: 0,
   animation: "none",
+  animationAxis: "y",
+  animationStagger: 0.1,
+  animationStaggerBy: "column",
+  cellAnimations: [],
+  keyframeDuration: 4,
+  keyframeLoop: false,
+  keyframeTracks: [],
+  animationTime: 0,
   animationDuration: 4,
   animationAmount: 0.2,
   animationPhase: 0,
@@ -100,6 +109,7 @@ const BALANCED: Partial<PatternParams> = {
   scale: 1,
   sourceMode: "sample",
   animation: "none",
+  animationTime: 0,
   animationPhase: 0,
 };
 
@@ -139,28 +149,51 @@ export const PRESETS: ReadonlyArray<PatternRecipe> = [
     },
   },
   {
-    name: "Dark Raster",
-    description: "Low-contrast vertical texture",
+    name: "Column Wave",
+    description: "Independent cells wave vertically by column",
     params: {
       ...BALANCED,
-      preset: "candles",
-      cellSize: 28,
+      useCells: true,
+      preset: "shapes",
+      sourceMode: "ignore",
+      cellShape: "square",
+      cellSize: 48,
+      cellGapX: 12,
+      cellGapY: 12,
+      cellPadding: 4,
+      cellRotation: 0,
+      cellThreshold: 0.5,
+      cellAnimations: [],
+      animation: "wave",
+      animationDuration: 4,
+      animationAmount: 0.5,
+      animationAxis: "y",
+      animationStagger: 0.1,
+      animationStaggerBy: "column",
       colorMode: "custom",
-      colorCount: 4,
-      backgroundColor: "#18181b",
-      colors: ["#27272a", "#3f3f46", "#52525b", "#71717a"],
-      invert: true,
-      contrast: 1.15,
-      luminanceBias: -0.08,
+      colorCount: 2,
+      backgroundColor: "#f7f6f3",
+      colors: ["#f7f6f3", "#1d1c1a", "#1d1c1a", "#1d1c1a"],
+      invert: false,
+      contrast: 1,
+      luminanceBias: 0,
     },
   },
   {
     name: "Source Mosaic",
-    description: "Keep sampled source color",
+    description: "Whole cells keep sampled source color",
     params: {
       ...BALANCED,
+      useCells: true,
       preset: "shapes",
+      cellShape: "square",
       cellSize: 18,
+      cellGapX: 0,
+      cellGapY: 0,
+      cellPadding: 0,
+      cellRotation: 0,
+      cellThreshold: 0.5,
+      sampleChannel: "alpha",
       colorMode: "source",
       sourceBackground: 0.08,
       invert: false,
@@ -280,6 +313,9 @@ const NUMBER_RULES = {
   animationDuration: [0.5, 30, 2],
   animationAmount: [0, 1, 2],
   animationPhase: [0, 1, 3],
+  animationStagger: [0, 1, 3],
+  animationTime: [0, 86400, 6],
+  keyframeDuration: [0.1, 60, 6],
 } as const satisfies Partial<Record<keyof PatternParams, readonly [number, number, number]>>;
 
 const ENUM_RULES = {
@@ -294,6 +330,8 @@ const ENUM_RULES = {
   gradientType: ["linear", "radial"],
   sourceMode: ["sample", "mask", "ignore"],
   animation: ["none", "pulse", "rotate", "wave"],
+  animationAxis: ["x", "y"],
+  animationStaggerBy: ["none", "column", "row", "index"],
 } as const satisfies Partial<Record<keyof PatternParams, readonly string[]>>;
 
 
@@ -320,8 +358,34 @@ const CELL_SCHEMA = {
   },
 };
 
+const ANIMATION_NUMBERS = ["animationDuration", "animationAmount", "animationPhase", "animationStagger"] as const;
+const ANIMATION_ENUMS = ["animation", "animationAxis", "animationStaggerBy"] as const;
+const ENTITY_ID = new RegExp(CELL_ENTITY_ID_PATTERN);
+const CELL_ANIMATION_SCHEMA = {
+  type: "object",
+  required: ["id"],
+  additionalProperties: false,
+  properties: {
+    id: { type: "string", pattern: CELL_ENTITY_ID_PATTERN, description: "Stable rest-grid address: cell:repeatIndex:row:column." },
+    ...Object.fromEntries(ANIMATION_NUMBERS.map((key) => {
+      const [minimum, maximum, decimals] = NUMBER_RULES[key];
+      return [key, { type: "number", minimum, maximum, multipleOf: 10 ** -decimals }];
+    })),
+    ...Object.fromEntries(ANIMATION_ENUMS.map((key) => [key, { type: "string", enum: [...ENUM_RULES[key]] }])),
+  },
+};
+
 const PARAMETER_DESCRIPTIONS: Partial<Record<keyof PatternParams, string>> = {
-  useCells: "Select complete individual cell shapes instead of the continuous or atlas pattern generator. Masks select whole cells instead of clipping them.",
+  useCells: "Generate independently animated complete cells (default). Turn off only for intentional continuous/atlas modes. Masks select cells at rest, never clip moving cells.",
+  animation: "Cell-local motion in useCells mode: pulse/rotate about each rest center, wave translates each cell. Global pattern placement remains static.",
+  animationAxis: "Translation axis for cell wave motion inside each repeat before static scene placement; y moves cells vertically by default.",
+  animationTime: "Persisted elapsed seconds. Evaluation adds input.time to this cursor; pausing must preserve seconds for independent cell durations.",
+  animationStagger: "Wave phase offset in cycles per column, row, or rest-grid index. Does not move or resample the rest grid.",
+  animationStaggerBy: "Rest-grid coordinate used for cell wave phase offsets; columns by default.",
+  cellAnimations: "Sparse animation overrides addressed by stable cell:repeatIndex:row:column IDs. Inactive addresses remain stored. Each cell loops at its own duration.",
+  keyframeDuration: "Cell-keyframe timeline duration in seconds. Every key must be within this duration; independent from procedural periods.",
+  keyframeLoop: "Loop cell tracks by Euclidean modulo duration; exact end wraps to zero. Off holds first/last values, including at the endpoint. No implicit last-to-first tween.",
+  keyframeTracks: "Cell mode only. Unique target/property tracks; per-cell tracks replace all-cell fallback per channel. x/y/rotation add to procedural pose, scale/opacity multiply. Outgoing Bézier easing; at most 16,384 total keys. Sample at animationTime+input.time.",
   cellShape: "Shape of each individual cell when useCells is enabled; not a mask over the whole pattern.",
   cellSize: "Square lattice slot size in pixels. In whole-cell mode, center spacing is cellSize plus cellGapX/Y.",
   cellSides: "Sides of each polygon cell.",
@@ -349,6 +413,8 @@ export const PARAMETER_SCHEMA = {
       : choices ? { type: "string", enum: [...choices] }
         : key === "colorCount" ? { type: "integer", enum: [2, 3, 4] }
           : key === "layoutCells" ? { type: "array", maxItems: 144, items: CELL_SCHEMA }
+            : key === "cellAnimations" ? { type: "array", maxItems: 25000, items: CELL_ANIMATION_SCHEMA }
+              : key === "keyframeTracks" ? KEYFRAME_TRACKS_SCHEMA
             : typeof defaultValue === "boolean" ? { type: "boolean" }
           : Array.isArray(defaultValue) ? { type: "array", minItems: 4, maxItems: 4, items: { type: "string", pattern: "^#[0-9a-fA-F]{6}$" } }
             : { type: "string", pattern: "^#[0-9a-fA-F]{6}$" };
@@ -393,7 +459,7 @@ export function parsePreset(value: unknown): PatternParams {
     }
     target[key] = raw[key];
   }
-  for (const key of ["useCells", "invert", "transparent"] as const) {
+  for (const key of ["useCells", "invert", "transparent", "keyframeLoop"] as const) {
     if (raw[key] !== undefined) {
       if (typeof raw[key] !== "boolean") throw new Error(`Project field “${key}” must be true or false.`);
       next[key] = raw[key];
@@ -443,6 +509,42 @@ export function parsePreset(value: unknown): PatternParams {
       return result;
     }).sort((first, second) => first.index - second.index);
   }
+  if (raw.cellAnimations !== undefined) {
+    if (!Array.isArray(raw.cellAnimations) || raw.cellAnimations.length > 25000) {
+      throw new Error("Cell animations must be an array of at most 25,000 overrides.");
+    }
+    const ids = new Set<string>();
+    next.cellAnimations = Array.from(raw.cellAnimations, (entry): CellAnimationOverride => {
+      if (!entry || typeof entry !== "object" || Array.isArray(entry)) throw new Error("Each cell animation must be an object.");
+      const cell = entry as Record<string, unknown>;
+      if (typeof cell.id !== "string" || !ENTITY_ID.test(cell.id)) throw new Error("Cell animation ID must be cell:repeatIndex:row:column within the supported grid.");
+      if (ids.has(cell.id)) throw new Error("Cell animation IDs must be unique.");
+      ids.add(cell.id);
+      for (const key of Object.keys(cell)) {
+        if (key !== "id" && !(ANIMATION_NUMBERS as readonly string[]).includes(key) && !(ANIMATION_ENUMS as readonly string[]).includes(key)) {
+          throw new Error(`Unknown cell animation parameter “${key}”.`);
+        }
+      }
+      const result: CellAnimationOverride = { id: cell.id };
+      for (const key of ANIMATION_NUMBERS) {
+        const field = cell[key];
+        if (field === undefined) continue;
+        const [minimum, maximum, decimals] = NUMBER_RULES[key];
+        if (typeof field !== "number" || !Number.isFinite(field) || field < minimum || field > maximum) {
+          throw new Error(`Cell animation field “${key}” is outside its supported range.`);
+        }
+        result[key] = Number(field.toFixed(decimals));
+      }
+      for (const key of ANIMATION_ENUMS) {
+        const field = cell[key];
+        if (field === undefined) continue;
+        if (typeof field !== "string" || !(ENUM_RULES[key] as readonly string[]).includes(field)) throw new Error(`Cell animation field “${key}” is invalid.`);
+        (result as unknown as Record<string, unknown>)[key] = field;
+      }
+      return result;
+    }).sort((first, second) => compareCellTargets(first.id, second.id));
+  }
+  if (raw.keyframeTracks !== undefined) next.keyframeTracks = parseKeyframeTracks(raw.keyframeTracks, next.keyframeDuration);
   return next;
 }
 

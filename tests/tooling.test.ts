@@ -30,7 +30,7 @@ async function waitForServerUrl(child: Bun.ReadableSubprocess): Promise<string> 
       if (done) throw new Error(`Production server exited before starting:
 ${output}`);
       output += decoder.decode(value, { stream: true });
-      const match = output.match(/Pattern Lab running at (http:\/\/[^\s]+)/);
+      const match = output.match(/Taxis running at (http:\/\/[^\s]+)/);
       if (match?.[1]) return match[1];
     }
   } finally {

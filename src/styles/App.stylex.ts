@@ -1,7 +1,68 @@
 import * as stylex from "@stylexjs/stylex";
-import { colors, fonts } from "./tokens.stylex";
+import { colors, fonts, layout } from "./tokens.stylex";
 
 export const appStyles = stylex.create({
+  propertiesContainer: {
+    display: "contents",
+  },
+  propertiesHiddenForTimeline: {
+    display: { default: "contents", "@media (max-width: 900px)": "none" },
+  },
+  timelineButtonActive: {
+    color: colors.text,
+    backgroundColor: colors.surfaceSelected,
+  },
+  timelineDock: {
+    position: {
+      default: "fixed",
+      "@media (max-width: 900px) and (max-height: 520px)": "relative",
+    },
+    left: {
+      default: 270,
+      "@media (min-height: 521px) and (max-width: 900px)": "calc(8px + env(safe-area-inset-left))",
+      "@media (max-width: 900px) and (max-height: 520px)": "auto",
+    },
+    right: {
+      default: 312,
+      "@media (min-height: 521px) and (max-width: 900px)": "calc(8px + env(safe-area-inset-right))",
+      "@media (max-width: 900px) and (max-height: 520px)": "auto",
+    },
+    bottom: {
+      default: "calc(64px + env(safe-area-inset-bottom))",
+      "@media (min-height: 521px) and (max-width: 900px)": "calc(68px + env(safe-area-inset-bottom))",
+      "@media (max-width: 900px) and (max-height: 520px)": "auto",
+    },
+    height: {
+      default: layout.timelineDockHeight,
+      "@media (min-height: 521px) and (min-width: 521px) and (max-width: 900px)": "43dvh",
+      "@media (min-height: 521px) and (max-width: 520px)": "46dvh",
+      "@media (max-width: 900px) and (max-height: 520px)": 240,
+    },
+    width: {
+      default: "auto",
+      "@media (max-width: 900px) and (max-height: 520px)": "calc(100% - 16px)",
+    },
+    minWidth: 0,
+    minHeight: 0,
+    zIndex: 15,
+    overflow: "hidden",
+    color: colors.text,
+    backgroundColor: colors.panel,
+    borderColor: colors.lineStrong,
+    borderStyle: "solid",
+    borderWidth: 1,
+    borderRadius: 12,
+    alignSelf: "center",
+    order: 3,
+    marginTop: {
+      default: 0,
+      "@media (max-width: 900px) and (max-height: 520px)": 8,
+    },
+    marginBottom: {
+      default: 0,
+      "@media (max-width: 900px) and (max-height: 520px)": 8,
+    },
+  },
   appShell: {
     position: "relative",
     width: "100vw",
@@ -40,7 +101,7 @@ export const appStyles = stylex.create({
     borderRadius: 7,
     color: colors.canvas,
     backgroundColor: colors.text,
-    fontSize: 11,
+    fontSize: 14,
     fontWeight: 600,
     transform: {
       default: "translateY(-160%)",
@@ -168,8 +229,8 @@ export const appStyles = stylex.create({
       default: "transparent",
       ":hover": colors.surfaceHover,
     },
-    fontFamily: fonts.mono,
-    fontSize: 11,
+    fontFamily: fonts.sans,
+    fontSize: 14,
     lineHeight: 1,
     textAlign: "center",
     fontVariantNumeric: "tabular-nums",
@@ -237,8 +298,8 @@ export const appStyles = stylex.create({
   },
   layerGrip: {
     color: "#4a4a51",
-    fontFamily: fonts.mono,
-    fontSize: 12,
+    fontFamily: fonts.sans,
+    fontSize: 14,
     lineHeight: 1,
   },
   layerIcon: {
@@ -261,7 +322,7 @@ export const appStyles = stylex.create({
   layerName: {
     overflow: "hidden",
     color: "inherit",
-    fontSize: 12,
+    fontSize: 14,
     fontWeight: 500,
     textOverflow: "ellipsis",
     whiteSpace: "nowrap",
@@ -269,8 +330,8 @@ export const appStyles = stylex.create({
   layerDetail: {
     overflow: "hidden",
     color: colors.textMuted,
-    fontFamily: fonts.mono,
-    fontSize: 9,
+    fontFamily: fonts.sans,
+    fontSize: 14,
     lineHeight: 1,
     textOverflow: "ellipsis",
     whiteSpace: "nowrap",
@@ -287,14 +348,14 @@ export const appStyles = stylex.create({
     borderTopStyle: "solid",
     borderTopWidth: 1,
     color: colors.textSecondary,
-    fontSize: 10,
+    fontSize: 14,
   },
   layersFooterDetail: {
     color: colors.textMuted,
-    fontFamily: fonts.mono,
-    fontSize: 8,
+    fontFamily: fonts.sans,
+    fontSize: 14,
     lineHeight: 1,
-    textTransform: "uppercase",
+    textTransform: "none",
   },
   exportToolbar: {
     position: {
@@ -389,8 +450,8 @@ export const appStyles = stylex.create({
       ":hover": colors.surfaceHover,
     },
     fontSize: {
-      default: 10,
-      "@media (max-width: 900px)": 9,
+      default: 14,
+      "@media (max-width: 900px)": 14,
     },
     whiteSpace: {
       default: "normal",
@@ -434,8 +495,8 @@ export const appStyles = stylex.create({
     paddingBottom: 0,
     paddingLeft: 7,
     color: colors.textMuted,
-    fontFamily: fonts.mono,
-    fontSize: 9,
+    fontFamily: fonts.sans,
+    fontSize: 14,
     lineHeight: 1,
   },
   fingerprintDot: {
@@ -490,7 +551,7 @@ export const appStyles = stylex.create({
     color: colors.textSecondary,
     backgroundColor: colors.surface,
     boxShadow: "0 15px 36px rgba(0, 0, 0, 0.34)",
-    fontSize: 10,
+    fontSize: 14,
     transform: {
       default: "translateX(-50%)",
       "@media (max-width: 900px) and (max-height: 520px)": "none",

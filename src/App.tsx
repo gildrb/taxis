@@ -3,6 +3,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Controls, type PanelSelection } from "./components/Controls";
 import { Icon } from "./components/Icon";
 import { Preview } from "./components/Preview";
+import { ExportMenu, type ExportRequest } from "./components/ExportMenu";
+import { exportScene, getExportSupport, type ExportFormat, type ExportSupport } from "./export/encode";
 import { downloadBlob, downloadText } from "./export/download";
 import { usePatternHistory } from "./hooks/usePatternHistory";
 import { generatePattern, projectFor } from "./model/pattern";
@@ -17,7 +19,6 @@ import { renderScene } from "./render/scene";
 import { appStyles } from "./styles/App.stylex";
 import { sharedStyles } from "./styles/shared.stylex";
 
-type ExportKind = "SVG" | "PNG" | "JSON";
 interface UnresolvedSource {
   fingerprint: string;
   usesAlpha?: boolean;
@@ -40,6 +41,12 @@ function parseZoom(value: string | null): number {
   const parsed = Number(value ?? 1);
   if (!Number.isFinite(parsed)) return 1;
   return Math.round(Math.min(2, Math.max(0.5, parsed)) * 10) / 10;
+}
+
+function parseCellSelection(value: string | null): string | undefined {
+  const match = /^cell:(0|[1-9]\d*):(0|[1-9]\d*):(0|[1-9]\d*)$/.exec(value ?? "");
+  if (!match || Number(match[1]) >= 144 || Number(match[2]) >= 1024 || Number(match[3]) >= 1024) return undefined;
+  return value ?? undefined;
 }
 
 function parseRadialSize(query: URLSearchParams): number | undefined {
@@ -78,7 +85,7 @@ export default function App({ renderer }: { renderer: SvgRenderer }) {
   const source = history.source;
   const vectorFingerprint = useMemo(() => source.vectorMask ? fingerprintText(JSON.stringify(source.vectorMask)) : undefined, [source.vectorMask]);
   const [playing, setPlaying] = useState(false);
-  const playbackPhaseRef = useRef(history.params.animationPhase);
+  const playbackTimeRef = useRef(history.params.animationTime);
   const [unresolvedSource, setUnresolvedSource] = useState<UnresolvedSource | undefined>(() => requestedSourceFingerprint && (requestedSourceFingerprint !== source.fingerprint || requestedSourceUsesAlpha !== undefined && requestedSourceUsesAlpha !== source.usesAlpha)
     ? { fingerprint: requestedSourceFingerprint, usesAlpha: requestedSourceUsesAlpha, radialSize: requestedRadialSize, vectorFingerprint: requestedVectorFingerprint }
     : undefined);
@@ -103,15 +110,32 @@ export default function App({ renderer }: { renderer: SvgRenderer }) {
     return panel === "source" || panel === "canvas" ? panel : "pattern";
   });
   const [zoom, setZoom] = useState(() => parseZoom(new URLSearchParams(window.location.search).get("zoom")));
+  const [selectedCellId, setSelectedCellId] = useState(() => parseCellSelection(new URLSearchParams(window.location.search).get("cell")));
   const [notice, setNoticeState] = useState<{ id: number; message: string } | undefined>(() => initialSettings.invalid
-    ? { id: 1, message: "This link does not contain valid Pattern Lab settings." }
+    ? { id: 1, message: "This link does not contain valid Taxis settings." }
     : undefined);
   const noticeIdRef = useRef(initialSettings.invalid ? 1 : 0);
   const setNotice = useCallback((message?: string) => {
     setNoticeState(message === undefined ? undefined : { id: ++noticeIdRef.current, message });
   }, []);
   const [renderError, setRenderError] = useState<string>();
-  const [busy, setBusy] = useState<ExportKind>();
+  const [busy, setBusy] = useState<ExportRequest["format"]>();
+  const [exportProgress, setExportProgress] = useState(0);
+  const [exportError, setExportError] = useState<string>();
+  const exportControllerRef = useRef<AbortController | undefined>(undefined);
+  const [exportCapabilities, setExportCapabilities] = useState<Record<ExportFormat, ExportSupport>>(() => Object.fromEntries(
+    ["svg", "png", "jpeg", "webp", "mp4", "webm"].map((format) => [format, { supported: false, reason: "Checking export support…" }]),
+  ) as Record<ExportFormat, ExportSupport>);
+  useEffect(() => {
+    let current = true;
+    void getExportSupport(history.params.width, history.params.height).then((support) => {
+      if (current) setExportCapabilities(support);
+    }).catch((error: unknown) => {
+      if (current) setExportError(error instanceof Error ? error.message : "Export support could not be checked. Reopen Export to try again.");
+    });
+    return () => { current = false; };
+  }, [history.params.width, history.params.height]);
+  useEffect(() => () => exportControllerRef.current?.abort(), []);
   const sourceInputRef = useRef<HTMLInputElement>(null);
   const projectInputRef = useRef<HTMLInputElement>(null);
   const resetButtonRef = useRef<HTMLButtonElement>(null);
@@ -134,7 +158,7 @@ export default function App({ renderer }: { renderer: SvgRenderer }) {
   useEffect(() => {
     if (requestedSourceFingerprint && (requestedSourceFingerprint !== source.fingerprint || requestedSourceUsesAlpha !== undefined && requestedSourceUsesAlpha !== source.usesAlpha)) {
       setNotice(initialSettings.invalid
-        ? "This link does not contain valid Pattern Lab settings, and its original source image is unavailable."
+        ? "This link does not contain valid Taxis settings, and its original source image is unavailable."
         : "The linked settings were restored. Reopen the original source image to restore its pixels.");
     }
   }, []);
@@ -144,7 +168,7 @@ export default function App({ renderer }: { renderer: SvgRenderer }) {
     const sourceUsesAlpha = unresolvedSource ? unresolvedSource.usesAlpha : source.usesAlpha;
     const radialSize = unresolvedSource ? unresolvedSource.radialSize : source.kind === "radial" ? source.width : undefined;
     const sourceVector = unresolvedSource ? unresolvedSource.vectorFingerprint : vectorFingerprint;
-    const signature = JSON.stringify([history.params, sourceFingerprint, sourceUsesAlpha ?? null, radialSize ?? null, sourceVector ?? null, selected, zoom]);
+    const signature = JSON.stringify([history.params, sourceFingerprint, sourceUsesAlpha ?? null, radialSize ?? null, sourceVector ?? null, selected, zoom, selectedCellId]);
     if (preserveInitialInvalidUrlRef.current) {
       preserveInitialInvalidUrlRef.current = false;
       lastUrlSignatureRef.current = signature;
@@ -169,6 +193,8 @@ export default function App({ renderer }: { renderer: SvgRenderer }) {
     else url.searchParams.set("panel", selected);
     if (zoom === 1) url.searchParams.delete("zoom");
     else url.searchParams.set("zoom", zoom.toFixed(1));
+    if (selectedCellId) url.searchParams.set("cell", selectedCellId);
+    else url.searchParams.delete("cell");
 
     const initialized = lastUrlSignatureRef.current !== undefined;
     if (!initialized) {
@@ -180,7 +206,7 @@ export default function App({ renderer }: { renderer: SvgRenderer }) {
     lastUrlSignatureRef.current = signature;
     if (urlGroupTimerRef.current !== undefined) window.clearTimeout(urlGroupTimerRef.current);
     urlGroupTimerRef.current = window.setTimeout(() => { urlGroupTimerRef.current = undefined; }, 400);
-  }, [history.params, selected, source.fingerprint, source.kind, source.usesAlpha, unresolvedSource, vectorFingerprint, zoom]);
+  }, [history.params, selected, source.fingerprint, source.kind, source.usesAlpha, unresolvedSource, vectorFingerprint, zoom, selectedCellId]);
 
   useEffect(() => {
     if (source.kind === "radial") return;
@@ -244,30 +270,65 @@ export default function App({ renderer }: { renderer: SvgRenderer }) {
         }
         setSelected(nextPanel);
         setZoom(nextZoom);
-        lastUrlSignatureRef.current = JSON.stringify([nextParams, linkedFingerprint, linkedUsesAlpha ?? cachedSource?.usesAlpha ?? null, linkedRadialSize ?? (cachedSource?.kind === "radial" ? cachedSource.width : null), linkedVector ?? null, nextPanel, nextZoom]);
+        const nextCell = parseCellSelection(query.get("cell"));
+        setSelectedCellId(nextCell);
+        lastUrlSignatureRef.current = JSON.stringify([nextParams, linkedFingerprint, linkedUsesAlpha ?? cachedSource?.usesAlpha ?? null, linkedRadialSize ?? (cachedSource?.kind === "radial" ? cachedSource.width : null), linkedVector ?? null, nextPanel, nextZoom, nextCell]);
         if (urlGroupTimerRef.current !== undefined) window.clearTimeout(urlGroupTimerRef.current);
         urlGroupTimerRef.current = undefined;
       } catch {
-        setNotice("This history entry does not contain valid Pattern Lab settings.");
+        setNotice("This history entry does not contain valid Taxis settings.");
       }
     };
     window.addEventListener("popstate", restore);
     return () => window.removeEventListener("popstate", restore);
   }, [history.commit, history.commitScene, history.endTransaction, initialSource.fingerprint, markParamChanges, setNotice]);
 
-  const fingerprint = useMemo(() => projectFingerprint(history.params, source), [history.params, source]);
+  const hasAnimation = history.params.animation !== "none" || (history.params.useCells && history.params.cellAnimations.some((cell) => cell.animation !== undefined && cell.animation !== "none"));
+  const cellEntities = useMemo(() => {
+    if (!history.params.useCells) return [];
+    try { return generatePattern({ params: history.params, source }).entities ?? []; }
+    catch { return []; } // Preview reports the same evaluator error; do not replace its last valid frame.
+  }, [history.params, source]);
 
   const pausePlayback = useCallback(() => {
-    const params = playing ? { ...paramsRef.current, animationPhase: playbackPhaseRef.current } : paramsRef.current;
+    const params = playing ? { ...paramsRef.current, animationTime: playbackTimeRef.current } : paramsRef.current;
     setPlaying(false);
     if (playing) {
       history.endTransaction();
-      markParamChanges(["animationPhase"]);
+      markParamChanges(["animationTime"]);
       history.commit(params);
       paramsRef.current = params;
     }
     return params;
   }, [history.commit, history.endTransaction, markParamChanges, playing]);
+
+  const pickCell = useCallback((x: number, y: number) => {
+    try {
+      const params = pausePlayback();
+      const entities = generatePattern({ params, source: sourceRef.current }).entities ?? [];
+      const hit = [...entities].reverse().find((entity) => {
+        const shape = entity.primitive;
+        return entity.visible && shape && shape.opacity > 0 && x >= shape.x && x <= shape.x + shape.width && y >= shape.y && y <= shape.y + shape.height;
+      });
+      setSelectedCellId(hit?.id);
+      if (hit) setSelected("pattern");
+    } catch (error) { setNotice(error instanceof Error ? error.message : "Cell selection failed."); }
+  }, [pausePlayback, setNotice]);
+
+  const stepCell = useCallback((column: number, row: number) => {
+    try {
+      const params = pausePlayback();
+      const entities = (generatePattern({ params, source: sourceRef.current }).entities ?? []).filter((entity) => entity.visible);
+      const current = entities.find((entity) => entity.id === selectedCellId);
+      const next = current
+        ? entities.find((entity) => entity.repeatIndex === current.repeatIndex && entity.row === current.row + row && entity.column === current.column + column)
+        : entities.reduce<(typeof entities)[number] | undefined>((closest, entity) => {
+          const distance = (cell: (typeof entities)[number]) => (cell.pose.x - params.width / 2) ** 2 + (cell.pose.y - params.height / 2) ** 2;
+          return !closest || distance(entity) < distance(closest) ? entity : closest;
+        }, undefined);
+      if (next) { setSelectedCellId(next.id); setSelected("pattern"); }
+    } catch (error) { setNotice(error instanceof Error ? error.message : "Cell selection failed."); }
+  }, [pausePlayback, selectedCellId, setNotice]);
 
   const commitParams = useCallback((patch: unknown) => {
     if (!patch || typeof patch !== "object" || Array.isArray(patch)) throw new Error("Parameter edits must be an object.");
@@ -278,7 +339,7 @@ export default function App({ renderer }: { renderer: SvgRenderer }) {
     const resizesCanvas = keys.includes("width") || keys.includes("height");
     let committed = paramsRef.current;
     history.commit((params) => {
-      const next = parsePreset({ ...params, ...(playing ? { animationPhase: playbackPhaseRef.current } : {}), ...patch });
+      const next = parsePreset({ ...params, ...(playing ? { animationTime: playbackTimeRef.current } : {}), ...patch });
       if (resizesCanvas && !keys.includes("fit") && params.fit === "contain"
         && next.width * sourceRef.current.height !== next.height * sourceRef.current.width) next.fit = "cover";
       committed = next;
@@ -298,8 +359,8 @@ export default function App({ renderer }: { renderer: SvgRenderer }) {
     }
   }, []);
 
-  const reportPlaybackPhase = useCallback((phase: number) => {
-    playbackPhaseRef.current = phase;
+  const reportPlaybackTime = useCallback((time: number) => {
+    playbackTimeRef.current = time;
   }, []);
 
   const loadImage = async (file: File) => {
@@ -345,34 +406,46 @@ export default function App({ renderer }: { renderer: SvgRenderer }) {
       ? `${file.name} restored for the linked settings`
       : !latest.useCells && latest.sourceMode === "mask" && !next.vectorMask && next.kind !== "radial"
         ? `${file.name} imported in Sample mode. Precise masking needs an SVG with supported filled paths.`
-        : `${file.name} mapped at its original aspect ratio${next.vectorMask ? " · vector mask ready" : ""}`);
+        : `${file.name} loaded.`);
     return projectFor(nextScene);
   };
 
-  const exportFile = async (kind: ExportKind) => {
+  const exportFile = async (request: ExportRequest) => {
+    if (exportControllerRef.current) return;
+    if (request.format !== "json" && renderError) { setExportError(renderError); return; }
+    const controller = new AbortController();
+    exportControllerRef.current = controller;
     const exportParams = pausePlayback();
-    const exportFingerprint = projectFingerprint(exportParams, source);
-    const busyStartedAt = performance.now();
-    setBusy(kind);
-    if (kind === "PNG") await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    const exportSource = sourceRef.current;
+    const exportFingerprint = projectFingerprint(exportParams, exportSource);
+    setBusy(request.format);
+    setExportProgress(0);
+    setExportError(undefined);
     try {
-      const input = { params: exportParams, source };
-      const baseName = `pattern-${exportFingerprint}`;
-      if (kind === "JSON") {
+      const input = { params: exportParams, source: exportSource };
+      const baseName = `taxis-${exportFingerprint}`;
+      if (request.format === "json") {
         downloadText(JSON.stringify(projectFor(input), null, 2), `${baseName}.json`, "application/json");
       } else {
-        const format = kind === "SVG" ? "svg" : "png";
-        const bytes = renderScene(input, renderer, format);
-        downloadBlob(new Blob([bytes], { type: kind === "SVG" ? "image/svg+xml" : "image/png" }), `${baseName}.${format}`);
+        const blob = await exportScene(input, renderer, {
+          ...request,
+          format: request.format,
+          signal: controller.signal,
+          onProgress: ({ completed, total }) => setExportProgress(completed / total),
+        });
+        controller.signal.throwIfAborted();
+        downloadBlob(blob, `${baseName}.${request.format === "jpeg" ? "jpg" : request.format}`);
       }
-      setNotice(`${kind} exported · ${exportFingerprint}`);
+      setNotice("Export complete.");
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : `${kind} export failed.`);
-    } finally {
-      if (kind === "PNG") {
-        const remaining = 200 - (performance.now() - busyStartedAt);
-        if (remaining > 0) await new Promise((resolve) => window.setTimeout(resolve, remaining));
+      if (controller.signal.aborted) setNotice("Export canceled.");
+      else {
+        const message = error instanceof Error ? error.message : "Export failed. Try again.";
+        setExportError(message);
+        setNotice(message);
       }
+    } finally {
+      exportControllerRef.current = undefined;
       setBusy(undefined);
     }
   };
@@ -409,7 +482,7 @@ export default function App({ renderer }: { renderer: SvgRenderer }) {
     paramsRef.current = project.params;
     sourceRef.current = nextSource;
     const restored = projectFor({ params: project.params, source: nextSource });
-    setNotice(project.source ? `Project restored · ${restored.fingerprint}` : "Settings imported without replacing the source image");
+    setNotice(project.source ? "Project restored." : "Settings imported.");
     return restored;
   };
 
@@ -428,6 +501,7 @@ export default function App({ renderer }: { renderer: SvgRenderer }) {
       svg: (time = 0) => new TextDecoder().decode(renderScene({ params: paramsRef.current, source: sourceRef.current, time }, renderer, "svg")),
       render: (time = 0) => renderScene({ params: paramsRef.current, source: sourceRef.current, time }, renderer, "rgba"),
       png: (time = 0) => renderScene({ params: paramsRef.current, source: sourceRef.current, time }, renderer, "png"),
+      export: (options, time = 0) => exportScene({ params: paramsRef.current, source: sourceRef.current, time }, renderer, options),
     };
     window.taxis = api;
     return () => { if (window.taxis === api) Reflect.deleteProperty(window, "taxis"); };
@@ -445,7 +519,7 @@ export default function App({ renderer }: { renderer: SvgRenderer }) {
     }
     setPlaying(false);
     markParamChanges(Object.keys(recipe.params) as (keyof PatternParams)[]);
-    history.commit((params) => applyPreset(playing ? { ...params, animationPhase: playbackPhaseRef.current } : params, recipe.params));
+    history.commit((params) => applyPreset(playing ? { ...params, animationTime: playbackTimeRef.current } : params, recipe.params));
   };
 
   const undo = () => {
@@ -473,7 +547,7 @@ export default function App({ renderer }: { renderer: SvgRenderer }) {
   return (
     <main {...stylex.props(appStyles.appShell)}>
       <a {...stylex.props(appStyles.skipLink)} href="#properties-panel">Skip to properties</a>
-      <h1 {...stylex.props(sharedStyles.visuallyHidden)}>Pattern Lab</h1>
+      <h1 {...stylex.props(sharedStyles.visuallyHidden)}>Taxis</h1>
 
       <div role="group" {...stylex.props(sharedStyles.glassPanel, appStyles.topToolbar)} aria-label="Canvas tools">
         <span {...stylex.props(appStyles.toolbarGroup)}>
@@ -487,7 +561,7 @@ export default function App({ renderer }: { renderer: SvgRenderer }) {
           <button {...stylex.props(appStyles.toolbarButton, appStyles.narrowZoomButton)} type="button" aria-label="Zoom in" aria-disabled={zoom >= 2} onClick={() => { if (zoom < 2) setZoom((value) => Math.min(2, value + 0.1)); }}><Icon name="zoomIn" /></button>
         </span>
         <span {...stylex.props(appStyles.toolbarSeparator)} aria-hidden="true" />
-        <button {...stylex.props(appStyles.toolbarButton)} ref={resetButtonRef} type="button" aria-label="Reset project" onClick={() => { setPlaying(false); sourceRequestRef.current++; markParamChanges(["width", "height", "scale", "offsetX", "offsetY", "sourceRotation"]); history.reset(createRadialSource()); setUnresolvedSource(undefined); setZoom(1); setRenderError(undefined); setNotice("Scene reset."); }}><Icon name="reset" /></button>
+        <button {...stylex.props(appStyles.toolbarButton)} ref={resetButtonRef} type="button" aria-label="Reset project" onClick={() => { setPlaying(false); sourceRequestRef.current++; markParamChanges(["width", "height", "scale", "offsetX", "offsetY", "sourceRotation"]); history.reset(createRadialSource()); setSelectedCellId(undefined); setUnresolvedSource(undefined); setZoom(1); setRenderError(undefined); setNotice("Scene reset."); }}><Icon name="reset" /></button>
       </div>
 
       <aside {...stylex.props(sharedStyles.glassPanel, appStyles.layersPanel)} aria-label="Layers">
@@ -504,7 +578,7 @@ export default function App({ renderer }: { renderer: SvgRenderer }) {
             </button>
           ))}
         </div>
-        <footer {...stylex.props(appStyles.layersFooter)}><span>Pattern Lab</span><small {...stylex.props(appStyles.layersFooterDetail)}>local · deterministic</small></footer>
+        <footer {...stylex.props(appStyles.layersFooter)}><a href="/public/THIRD_PARTY_NOTICES.txt" target="_blank" rel="noopener noreferrer" aria-label="Taxis licenses" style={{ color: "inherit", textDecoration: "none" }}>Taxis</a></footer>
       </aside>
 
       <Preview
@@ -513,13 +587,20 @@ export default function App({ renderer }: { renderer: SvgRenderer }) {
         source={source}
         zoom={zoom}
         playing={playing}
-        onFramePhase={reportPlaybackPhase}
+        onFrameTime={reportPlaybackTime}
+        selection={cellEntities.find((entity) => entity.id === selectedCellId && entity.visible)?.primitive ?? undefined}
+        onPickCell={history.params.useCells && !renderError ? pickCell : undefined}
+        onStepCell={history.params.useCells && !renderError ? stepCell : undefined}
+        onClearCell={() => setSelectedCellId(undefined)}
         onFile={(file) => { void loadImage(file).catch(reportImportError); }}
         onChooseSource={() => sourceInputRef.current?.click()}
         onError={reportRenderError}
       />
 
       <Controls
+        entities={cellEntities}
+        selectedCellId={selectedCellId}
+        onSelectCell={(id) => { pausePlayback(); setSelectedCellId(id); }}
         selected={selected}
         params={history.params}
         source={source}
@@ -530,26 +611,31 @@ export default function App({ renderer }: { renderer: SvgRenderer }) {
         onSelect={setSelected}
         onPreset={applyRecipe}
         playing={playing}
-        onTogglePlayback={() => {
+        onTogglePlayback={hasAnimation && !renderError ? () => {
           if (playing) pausePlayback();
-          else if (history.params.animation !== "none" && !renderError) {
+          else {
             history.endTransaction();
             setPlaying(true);
           }
-        }}
-        onResetPlayback={() => { commitParams({ animationPhase: 0 }); }}
+        } : undefined}
+        onResetPlayback={() => { commitParams({ animationTime: 0, animationPhase: 0 }); }}
         onChooseSource={() => sourceInputRef.current?.click()}
       />
 
       <footer {...stylex.props(sharedStyles.glassPanel, appStyles.exportToolbar)}>
-        <span {...stylex.props(appStyles.fingerprint)} data-testid="fingerprint" translate="no" title="Same source and settings always produce this ID"><i {...stylex.props(appStyles.fingerprintDot)} /><span {...stylex.props(sharedStyles.visuallyHidden)}>Scene fingerprint: </span>{fingerprint}<span {...stylex.props(sharedStyles.visuallyHidden)}>. Same source and settings always produce this ID.</span></span>
         <span {...stylex.props(appStyles.toolbarSeparator, appStyles.mobileToolbarSeparator)} aria-hidden="true" />
         <button {...stylex.props(appStyles.exportButton)} type="button" onClick={() => projectInputRef.current?.click()}><Icon name="folder" size={14} /> Open Project</button>
-        <button {...stylex.props(appStyles.exportButton)} type="button" aria-disabled={Boolean(busy)} onClick={() => { if (!busy) void exportFile("JSON"); }}><Icon name="copy" size={14} /> Export Project</button>
-        <button {...stylex.props(appStyles.exportButton)} type="button" aria-disabled={Boolean(busy || renderError)} onClick={() => { if (!busy && !renderError) void exportFile("SVG"); }}>SVG</button>
-        <button {...stylex.props(appStyles.exportButton, appStyles.primaryExportButton)} type="button" aria-disabled={Boolean(busy || renderError)} onClick={() => { if (!busy && !renderError) void exportFile("PNG"); }}>
-          {busy === "PNG" ? "Export PNG · Rendering…" : "Export PNG"} <Icon name="download" size={14} />
-        </button>
+        <ExportMenu
+          capabilities={{ ...Object.fromEntries(Object.entries(exportCapabilities).map(([format, support]) => [format, renderError ? { supported: false, reason: renderError } : support])), json: { supported: true } }}
+          animationDuration={history.params.animationDuration}
+          backgroundColor={history.params.backgroundColor}
+          busy={Boolean(busy)}
+          progress={exportProgress}
+          error={exportError}
+          onOpen={() => { pausePlayback(); setExportError(undefined); }}
+          onExport={(request) => { void exportFile(request); }}
+          onCancel={() => exportControllerRef.current?.abort()}
+        />
       </footer>
 
       <input hidden ref={sourceInputRef} type="file" name="source-image" aria-label="Choose source image" accept=".png,.jpg,.jpeg,.webp,.avif,.svg,image/png,image/jpeg,image/webp,image/avif,image/svg+xml" onChange={(event) => {
@@ -557,7 +643,7 @@ export default function App({ renderer }: { renderer: SvgRenderer }) {
         event.currentTarget.value = "";
         if (file) void loadImage(file).catch(reportImportError);
       }} />
-      <input hidden ref={projectInputRef} type="file" name="project-file" aria-label="Open Pattern Lab project" accept=".json,application/json" onChange={(event) => {
+      <input hidden ref={projectInputRef} type="file" name="project-file" aria-label="Open Taxis project" accept=".json,application/json" onChange={(event) => {
         const file = event.currentTarget.files?.[0];
         event.currentTarget.value = "";
         if (file) void importProject(file).catch(reportImportError);

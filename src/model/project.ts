@@ -26,11 +26,11 @@ export function parseProject(value: unknown): ParsedProject {
   const raw = value as Record<string, unknown>;
   if (raw.app === undefined) {
     if (["version", "fingerprint", "source"].some((key) => Object.hasOwn(raw, key))) {
-      throw new Error("This project envelope is missing its Pattern Lab app marker.");
+      throw new Error("This project envelope is missing its Taxis app marker.");
     }
     return { params: parsePreset(value) };
   }
-  if (raw.app !== "Pattern Lab") throw new Error("This file is not a Pattern Lab project.");
+  if (raw.app !== "Taxis") throw new Error("This file is not a Taxis project.");
   if (raw.version !== 3) {
     throw new Error("This project version is not supported. Use the current Taxis scene schema.");
   }

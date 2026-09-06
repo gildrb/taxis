@@ -41,8 +41,9 @@ function polygonArea(points: [number, number][]): number {
 }
 
 describe("whole sampling cells", () => {
-  test("useCells is explicit and leaves continuous scenes unchanged when off", () => {
-    expect(DEFAULT_PARAMS.useCells).toBe(false);
+  test("cells are the default and continuous scenes require an explicit opt-out", () => {
+    expect(DEFAULT_PARAMS.useCells).toBe(true);
+    expect(DEFAULT_PARAMS).toMatchObject({ width: 1500, height: 1500, animationTime: 0 });
     const continuous = input({ useCells: false });
     expect(generatePattern({ ...continuous, params: { ...continuous.params, cellShape: "polygon", cellSides: 31,
       cellGapX: 999, cellGapY: 777, cellPadding: 128, cellRotation: 37, cellThreshold: 1 } })).toEqual(generatePattern(continuous));
@@ -302,5 +303,221 @@ describe("whole-cell transforms and export", () => {
       const tag = cellShape === "square" ? /<rect x=/g : cellShape === "circle" ? /<path /g : /<polygon /g;
       expect(svg.match(tag)).toHaveLength(frame.primitives.length);
     }
+  });
+});
+
+
+describe("stable independently animated cell entities", () => {
+  test("defaults expose a complete, addressable 1500 by 1500 rest grid", () => {
+    const frame = generatePattern({ params: DEFAULT_PARAMS, source: createRadialSource(64) });
+    expect(frame).toMatchObject({ width: 1500, height: 1500 });
+    expect(frame.entities).toHaveLength(31 * 31);
+    expect(frame.entities![0]).toMatchObject({ id: "cell:0:0:0", repeatIndex: 0, row: 0, column: 0,
+      rest: { x: 30, y: 30 }, pose: { x: 30, y: 30, scale: 1, rotation: 0, phase: 0 } });
+    expect(frame.entities!.at(-1)?.id).toBe("cell:0:30:30");
+    expect(new Set(frame.entities!.map((entity) => entity.id)).size).toBe(31 * 31);
+    expect(frame.entities!.some((entity) => !entity.selected && entity.primitive === null && entity.hiddenReason === "source")).toBe(true);
+    for (const entity of frame.entities!.filter((entity) => entity.visible)) {
+      expect(frame.primitives).toContain(entity.primitive!);
+      expect(entity.primitive!.entityId).toBe(entity.id);
+    }
+    expect(generatePattern(input({ useCells: false })).entities).toBeUndefined();
+  });
+
+  test("default wave translates each cell vertically with column-staggered phases", () => {
+    const model = input({ height: 100, animation: "wave", animationAmount: 0.5, cellPadding: 4 });
+    const rest = generatePattern({ ...model, params: { ...model.params, animation: "none" } });
+    for (const time of [0, 0.5, 1]) {
+      const frame = generatePattern({ ...model, time });
+      expect(frame.entities!.map((entity) => [entity.id, entity.rest])).toEqual(rest.entities!.map((entity) => [entity.id, entity.rest]));
+      for (const entity of frame.entities!) {
+        const displacement = Math.sin((time / 4 + entity.column * 0.1) * Math.PI * 2) * 10;
+        expect(entity.pose.x).toBe(entity.rest.x);
+        expect(entity.pose.y - entity.rest.y).toBeCloseTo(displacement, 8);
+        expect(entity.pose).toMatchObject({ scale: 1, rotation: 0 });
+        expect(entity.primitive!.width).toBeCloseTo(12, 8);
+        expect(entity.primitive!.height).toBeCloseTo(12, 8);
+        expect(entity.primitive!.x + entity.primitive!.width / 2).toBeCloseTo(entity.pose.x, 8);
+        expect(entity.primitive!.y + entity.primitive!.height / 2).toBeCloseTo(entity.pose.y, 8);
+      }
+      const middleRow = frame.entities!.filter((entity) => entity.row === 2);
+      expect(middleRow[0]!.pose.y).not.toBe(middleRow[1]!.pose.y);
+      expectComplete(frame);
+    }
+  });
+
+  test("wave axis, phase spacing, and row/index/no stagger are explicit controls", () => {
+    for (const animationStaggerBy of ["column", "row", "index", "none"] as const) {
+      const frame = generatePattern(input({ height: 100, animation: "wave", animationAxis: "x", animationAmount: 0.5,
+        animationStagger: 0.125, animationStaggerBy, animationPhase: 0.25 }));
+      for (const entity of frame.entities!) {
+        const index = animationStaggerBy === "column" ? entity.column : animationStaggerBy === "row" ? entity.row
+          : animationStaggerBy === "index" ? entity.row * 5 + entity.column : 0;
+        expect(entity.pose.y).toBe(entity.rest.y);
+        expect(entity.pose.x - entity.rest.x).toBeCloseTo(Math.sin((0.25 + 0.125 * index) * Math.PI * 2) * 10, 8);
+      }
+    }
+    const model = input({ animation: "wave", animationStagger: 0, cellPadding: 4 });
+    expect(generatePattern(model)).toEqual(generatePattern({ ...model, params: { ...model.params, animationStaggerBy: "none" } }));
+  });
+
+  test("pulse scales each body about its own center without scaling grid spacing", () => {
+    const model = input({ height: 100, animation: "pulse", animationAmount: 0.5, cellPadding: 4 });
+    const before = generatePattern(model);
+    const after = generatePattern({ ...model, time: 1 });
+    expect(after.primitives).toHaveLength(before.primitives.length);
+    for (let index = 0; index < after.entities!.length; index++) {
+      const entity = after.entities![index]!;
+      expect(entity.rest).toEqual(before.entities![index]!.rest);
+      expect({ x: entity.pose.x, y: entity.pose.y }).toEqual(entity.rest);
+      expect(entity.pose.scale).toBe(1.5);
+      expect(entity.primitive!.width).toBeCloseTo(before.entities![index]!.primitive!.width * 1.5, 8);
+      expect(entity.primitive!.height).toBeCloseTo(before.entities![index]!.primitive!.height * 1.5, 8);
+    }
+    expect(after.entities![1]!.pose.x - after.entities![0]!.pose.x).toBe(20);
+    expect(after.entities![5]!.pose.y - after.entities![0]!.pose.y).toBe(20);
+    expectComplete(after);
+    const collapsed = generatePattern({ ...model, params: { ...model.params, animationAmount: 1 }, time: 3 });
+    expect(collapsed.primitives).toHaveLength(0);
+    expect(collapsed.entities!.map((entity) => entity.id)).toEqual(before.entities!.map((entity) => entity.id));
+    expect(collapsed.entities!.every((entity) => entity.selected && !entity.visible && entity.hiddenReason === "collapsed" && entity.primitive !== null)).toBe(true);
+  });
+
+  test("rotation is a rigid local spin, not a field rotation or dynamic slot refit", () => {
+    const model = input({ height: 100, cellPadding: 4, animation: "rotate" });
+    const before = generatePattern(model);
+    const after = generatePattern({ ...model, time: 0.5 });
+    for (let index = 0; index < after.entities!.length; index++) {
+      const entity = after.entities![index]!;
+      expect(entity.rest).toEqual(before.entities![index]!.rest);
+      expect({ x: entity.pose.x, y: entity.pose.y }).toEqual(entity.rest);
+      expect(entity.pose).toMatchObject({ scale: 1, rotation: 45 });
+      expect(polygonArea(entity.primitive!.points!)).toBeCloseTo(12 * 12, 8);
+      expect(entity.primitive!.width).toBeCloseTo(12 * Math.SQRT2, 8);
+      expect(entity.primitive!.height).toBeCloseTo(12 * Math.SQRT2, 8);
+      expect(entity.primitive!.x + entity.primitive!.width / 2).toBeCloseTo(entity.rest.x, 8);
+      expect(entity.primitive!.y + entity.primitive!.height / 2).toBeCloseTo(entity.rest.y, 8);
+    }
+    expect(after.primitives).toHaveLength(before.primitives.length);
+    expectComplete(after);
+  });
+
+  test("source selection and color remain attached to rest cells as their bodies move", () => {
+    const alphaSource: SourceData = { width: 5, height: 1, pixels: new Uint8ClampedArray([
+      255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255, 0, 0, 255, 0, 0, 0, 255, 0,
+    ]), name: "Rest alpha", fingerprint: "rest-alpha", usesAlpha: true };
+    for (const sourceMode of ["sample", "mask"] as const) {
+      const model = input({ height: 100, fit: "stretch", sourceMode, sampleChannel: "alpha", cellPadding: 4,
+        animation: "wave", animationAxis: "x", animationAmount: 1, animationStaggerBy: "none" }, alphaSource);
+      const before = generatePattern(model);
+      const after = generatePattern({ ...model, time: 1 });
+      expect(after.entities!.map((entity) => [entity.id, entity.rest, entity.selected])).toEqual(before.entities!.map((entity) => [entity.id, entity.rest, entity.selected]));
+      const moved = after.entities!.find((entity) => entity.id === "cell:0:2:2")!;
+      expect(moved).toMatchObject({ rest: { x: 50, y: 50 }, pose: { x: 70, y: 50 }, selected: true, visible: true });
+      expect(after.primitives).toHaveLength(before.primitives.length);
+      expectComplete(after);
+    }
+    const colorSource = { ...alphaSource, pixels: new Uint8ClampedArray(alphaSource.pixels) };
+    colorSource.pixels[15] = colorSource.pixels[19] = 255;
+    const colored = input({ height: 100, fit: "stretch", sourceMode: "sample", sampleChannel: "alpha", colorMode: "source", cellPadding: 4,
+      animation: "wave", animationAxis: "x", animationAmount: 1, animationStaggerBy: "none" }, colorSource);
+    const stillColor = generatePattern(colored).entities!.find((entity) => entity.id === "cell:0:2:2")!;
+    const movedColor = generatePattern({ ...colored, time: 1 }).entities!.find((entity) => entity.id === stillColor.id)!;
+    expect(movedColor.primitive!.color).toBe(stillColor.primitive!.color);
+    expect(movedColor.primitive!.color).toBe("rgb(255 0 0)");
+  });
+
+  test("pattern clips select rest centers but cannot cut or unselect moving bodies", () => {
+    const model = input({ height: 100, maskShape: "circle", maskScale: 0.6, cellPadding: 4,
+      animation: "wave", animationAxis: "x", animationAmount: 1, animationStaggerBy: "none" });
+    const before = generatePattern(model);
+    const after = generatePattern({ ...model, time: 1 });
+    expect(after.entities!.map((entity) => [entity.id, entity.selected])).toEqual(before.entities!.map((entity) => [entity.id, entity.selected]));
+    const moved = after.entities!.find((entity) => entity.id === "cell:0:2:3")!;
+    expect(moved).toMatchObject({ rest: { x: 70, y: 50 }, pose: { x: 90, y: 50 }, selected: true, visible: true });
+    expect(moved.primitive!.x + moved.primitive!.width).toBe(96); // Beyond the stationary circle's right edge at80.
+    expect(patternToSvg({ ...model, time: 1 })).not.toMatch(/<(?:mask|clipPath) /);
+    expectComplete(after);
+  });
+
+  test("boundary culling changes explicit visibility, never identity or complete geometry", () => {
+    const model = input({ height: 100, animation: "wave", animationAmount: 1, animationStaggerBy: "none" });
+    const before = generatePattern(model);
+    const after = generatePattern({ ...model, time: 1 });
+    expect(before.primitives).toHaveLength(25);
+    expect(after.primitives).toHaveLength(20);
+    expect(after.entities!.map((entity) => [entity.id, entity.rest, entity.selected])).toEqual(before.entities!.map((entity) => [entity.id, entity.rest, entity.selected]));
+    const outside = after.entities!.filter((entity) => !entity.visible);
+    expect(outside).toHaveLength(5);
+    for (const entity of outside) {
+      expect(entity).toMatchObject({ selected: true, hiddenReason: "repeat-bounds", primitive: { y: 100, width: 20, height: 20 } });
+      expect(after.primitives).not.toContain(entity.primitive!);
+    }
+    expectComplete(after);
+  });
+
+  test("one addressed override animates only that cell while all other entities remain unchanged", () => {
+    const model = input({ height: 100, animation: "none", cellAnimations: [{ id: "cell:0:2:2", animation: "wave",
+      animationAxis: "x", animationStaggerBy: "none", animationAmount: 0.5, animationDuration: 2 }] });
+    const before = generatePattern(model);
+    const after = generatePattern({ ...model, time: 0.5 });
+    for (let index = 0; index < after.entities!.length; index++) {
+      const entity = after.entities![index]!;
+      if (entity.id === "cell:0:2:2") {
+        expect(entity.pose).toMatchObject({ x: 60, y: 50, phase: 0.25 });
+        expect(entity.primitive).not.toEqual(before.entities![index]!.primitive);
+      } else expect(entity).toEqual(before.entities![index]!);
+    }
+    const inactive = { ...model, params: { ...model.params, cellAnimations: [...model.params.cellAnimations,
+      { id: "cell:143:1023:1023", animation: "pulse" as const }] } };
+    expect(generatePattern({ ...inactive, time: 0.5 })).toEqual(after);
+  });
+
+  test("independent periods and elapsed cursor preserve exact pause, resume, and negative-time evaluation", () => {
+    const model = input({ height: 100, cellPadding: 4, animation: "wave", animationDuration: 4,
+      cellAnimations: [{ id: "cell:0:2:2", animation: "pulse", animationDuration: 3, animationAmount: 0.5, animationPhase: 0.1 }] });
+    const first = generatePattern(model);
+    const globalLoop = generatePattern({ ...model, time: 4 });
+    const individualLoop = generatePattern({ ...model, time: 3 });
+    const id = "cell:0:2:2";
+    expect(globalLoop.entities!.find((entity) => entity.id === id)).not.toEqual(first.entities!.find((entity) => entity.id === id));
+    expect(individualLoop.entities!.find((entity) => entity.id === id)).toEqual(first.entities!.find((entity) => entity.id === id));
+    expect(globalLoop.entities!.filter((entity) => entity.id !== id)).toEqual(first.entities!.filter((entity) => entity.id !== id));
+    const paused = { ...model, params: { ...model.params, animationTime: 3.25 } };
+    expect(generatePattern(paused)).toEqual(generatePattern({ ...model, time: 3.25 }));
+    expect(generatePattern({ ...paused, time: 0.5 })).toEqual(generatePattern({ ...model, time: 3.75 }));
+    expect(generatePattern({ ...paused, time: -3.25 })).toEqual(first);
+    const svg = patternToSvg({ ...paused, time: 0.5 });
+    const metadata = JSON.parse(svg.match(/<metadata>(.*?)<\/metadata>/s)![1]!.replaceAll("&quot;", '"').replaceAll("&amp;", "&"));
+    expect(metadata).toMatchObject({ app: "Taxis", time: 0.5, evaluatedTime: 3.75, params: { animationTime: 3.25 } });
+  });
+
+  test("repeat addresses are unique and rest/pose centers and retained geometry are in output space", () => {
+    const model = input({ width: 220, height: 100, layoutColumns: 2, layoutGapX: 20, cellPadding: 4,
+      cellAnimations: [{ id: "cell:1:2:2", animation: "wave", animationAxis: "x", animationStaggerBy: "none", animationAmount: 0.5 }] });
+    const before = generatePattern(model);
+    const after = generatePattern({ ...model, time: 1 });
+    expect(after.entities).toHaveLength(50);
+    expect(new Set(after.entities!.map((entity) => entity.id)).size).toBe(50);
+    expect(after.entities![0]!.rest).toEqual({ x: 10, y: 10 });
+    expect(after.entities![25]!.rest).toEqual({ x: 130, y: 10 });
+    const moved = after.entities!.find((entity) => entity.id === "cell:1:2:2")!;
+    expect(moved).toMatchObject({ rest: { x: 170, y: 50 }, pose: { x: 180, y: 50 }, primitive: { x: 174, y: 44, width: 12, height: 12 } });
+    expect(after.layers![0]).toEqual(before.layers![0]);
+    expect(after.layers![1]!.primitives).toContain(moved.primitive!);
+    expect(after.layers!.every((layer) => layer.entities === undefined)).toBe(true);
+    const svg = patternToSvg({ ...model, time: 1 });
+    const exportedIds = [...svg.matchAll(/data-cell-id="([^"]+)"/g)].map((match) => match[1]);
+    expect(exportedIds).toHaveLength(50);
+    expect(new Set(exportedIds).size).toBe(50);
+    const placed = { ...model, params: { ...model.params, patternScaleX: 0.7, patternScaleY: 0.5, rotation: 25,
+      patternOffsetX: 4, patternOffsetY: -7, layoutCells: [{ index: 1, rotation: 31 }] } };
+    const placedRest = generatePattern(placed);
+    const placedMoving = generatePattern({ ...placed, time: 1 });
+    expect(placedRest.entities!.map((entity) => [entity.id, entity.rest, entity.selected])).toEqual(placedMoving.entities!.map((entity) => [entity.id, entity.rest, entity.selected]));
+    for (const entity of placedMoving.entities!) {
+      if (entity.id !== moved.id) expect({ x: entity.pose.x, y: entity.pose.y }).toEqual(entity.rest);
+    }
+    expectComplete(placedMoving);
   });
 });

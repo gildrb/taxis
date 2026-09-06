@@ -5,7 +5,7 @@ test("changes each complete cell's shape and spacing through product controls", 
   await page.goto("/");
   await page.waitForFunction(() => Boolean(window.taxis));
   await page.evaluate(() => window.taxis.setParams({ width: 400, height: 300, cellSize: 40, sourceMode: "ignore" }));
-  await page.getByRole("checkbox", { name: "Use cells", exact: true }).check();
+  await expect(page.getByRole("checkbox", { name: "Use cells", exact: true })).toBeChecked();
   await chooseOption(page, "Cell shape", "Triangle");
   const initial = await page.evaluate(() => window.taxis.evaluate());
   expect(initial.primitives).toHaveLength(70);

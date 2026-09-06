@@ -118,3 +118,76 @@ test("round-trips complete-cell controls and distinguishes shape gaps from patte
   expect(PARAMETER_SCHEMA.properties.cellGapX).toMatchObject({ type: "integer", minimum: 0, maximum: 1024 });
   expect(PARAMETER_SCHEMA.properties.useCells).toMatchObject({ type: "boolean" });
 });
+
+
+describe("canonical cell animation scenes", () => {
+  test("default cells, square canvas, wave controls, and elapsed cursor are discoverable", () => {
+    expect(DEFAULT_PARAMS).toMatchObject({ useCells: true, width: 1500, height: 1500,
+      animationTime: 0, animationAxis: "y", animationStagger: 0.1, animationStaggerBy: "column", cellAnimations: [] });
+    expect(PARAMETER_SCHEMA.properties.animationTime).toMatchObject({ type: "number", minimum: 0, maximum: 86400, multipleOf: 0.000001, default: 0 });
+    expect(PARAMETER_SCHEMA.properties.animationAxis).toMatchObject({ enum: ["x", "y"], default: "y" });
+    expect(PARAMETER_SCHEMA.properties.animationStaggerBy).toMatchObject({ enum: ["none", "column", "row", "index"], default: "column" });
+    expect(PARAMETER_SCHEMA.properties.cellAnimations).toMatchObject({ type: "array", maxItems: 25000,
+      items: { type: "object", additionalProperties: false, required: ["id"], properties: {
+        animationDuration: { minimum: 0.5, maximum: 30 }, animationAmount: { minimum: 0, maximum: 1 },
+        animationAxis: { enum: ["x", "y"] },
+      } } });
+    expect(parsePreset({ animationTime: 12.3456789 }).animationTime).toBe(12.345679);
+  });
+
+  test("all motion fields fingerprint independently and overrides serialize in numeric address order", () => {
+    const source = createRadialSource(32);
+    const baseline = projectFingerprint(DEFAULT_PARAMS, source);
+    const overrides: Partial<PatternParams> = { animationTime: 7.25, animationAxis: "x", animationStagger: 0.25, animationStaggerBy: "index",
+      cellAnimations: [{ id: "cell:1:0:0", animation: "wave", animationAmount: 0.4 },
+        { id: "cell:0:10:0", animationDuration: 2.25, animationPhase: 0.175 },
+        { id: "cell:0:2:0", animation: "rotate", animationAxis: "x", animationStagger: 0.3, animationStaggerBy: "row" }] };
+    for (const [key, value] of Object.entries(overrides)) expect(projectFingerprint({ ...DEFAULT_PARAMS, [key]: value }, source)).not.toBe(baseline);
+    const parsed = parsePreset(overrides);
+    expect(parsed.cellAnimations.map((cell) => cell.id)).toEqual(["cell:0:2:0", "cell:0:10:0", "cell:1:0:0"]);
+    const project = projectFor({ params: parsed, source });
+    expect(project.app).toBe("Taxis");
+    expect(parseProject(project).params).toEqual(parsed);
+    expect(projectFingerprint(parsePreset({ ...parsed, cellAnimations: [...parsed.cellAnimations].reverse() }), source)).toBe(project.fingerprint);
+    expect(() => parseProject({ ...project, app: "Other app" })).toThrow("Taxis");
+    const copied = applyPreset(parsed, {});
+    copied.cellAnimations[0]!.animation = "none";
+    expect(parsed.cellAnimations[0]!.animation).toBe("rotate");
+    expect(projectFingerprint(copied, source)).not.toBe(project.fingerprint);
+  });
+
+  test("validates every override, its address, duplicates, ranges, and unknown fields", () => {
+    for (const value of [{ animationTime: -1 }, { animationTime: Infinity }, { animationTime: 86400.1 },
+      { animationAxis: "z" }, { animationStagger: -0.01 }, { animationStagger: 1.01 }, { animationStaggerBy: "random" }]) {
+      expect(() => parsePreset(value)).toThrow();
+    }
+    for (const cellAnimations of [null, {}, [null], [{}], [{ id: "cell:0:0:0" }, { id: "cell:0:0:0" }],
+      [{ id: "cell:144:0:0" }], [{ id: "cell:0:1024:0" }], [{ id: "cell:0:0:1024" }], [{ id: "cell:-1:0:0" }],
+      [{ id: "cell:0:0:0\n" }], [{ id: "cell:00:0:0" }], [{ id: "cell:0:0:1.5" }],
+      [{ id: "cell:0:0:0", duration: 2 }], [{ id: "cell:0:0:0", animationTime: 2 }],
+      [{ id: "cell:0:0:0", animation: "noise" }], [{ id: "cell:0:0:0", animationAxis: "z" }],
+      [{ id: "cell:0:0:0", animationStaggerBy: "random" }], [{ id: "cell:0:0:0", animationDuration: 0 }],
+      [{ id: "cell:0:0:0", animationDuration: 31 }], [{ id: "cell:0:0:0", animationAmount: 1.01 }],
+      [{ id: "cell:0:0:0", animationPhase: -0.1 }], [{ id: "cell:0:0:0", animationStagger: NaN }],
+      new Array(25001).fill({ id: "cell:0:0:0" })]) expect(() => parsePreset({ cellAnimations })).toThrow();
+    const parsed = parsePreset({ cellAnimations: [{ id: "cell:143:1023:1023", animationDuration: 2.345,
+      animationPhase: 0.1234, animationStagger: 0.2345 }] });
+    expect(parsed.cellAnimations).toEqual([{ id: "cell:143:1023:1023", animationDuration: 2.35, animationPhase: 0.123, animationStagger: 0.234 }]);
+  });
+
+  test("recipes explicitly choose continuous modes or true cells, with a reproducible column wave", () => {
+    for (const recipe of PRESETS) {
+      expect(typeof recipe.params.useCells).toBe("boolean");
+      const result = applyPreset(DEFAULT_PARAMS, recipe.params);
+      expect(result).toMatchObject({ width: 1500, height: 1500, animationTime: 0 });
+    }
+    const wave = PRESETS.find((recipe) => recipe.name === "Column Wave")!;
+    expect(applyPreset(DEFAULT_PARAMS, wave.params)).toMatchObject({ useCells: true, cellShape: "square", animation: "wave",
+      animationAxis: "y", animationStaggerBy: "column", animationStagger: 0.1, cellGapX: 12, cellGapY: 12, cellPadding: 4 });
+    const mosaic = PRESETS.find((recipe) => recipe.name === "Source Mosaic")!;
+    expect(mosaic.params).toMatchObject({ useCells: true, cellShape: "square", colorMode: "source", sampleChannel: "alpha" });
+    for (const name of ["Sliced Sphere", "Light Raster", "Masked Stripes", "Radial Rays", "Concentric Rings"]) {
+      expect(PRESETS.find((recipe) => recipe.name === name)?.params.useCells).toBe(false);
+    }
+  });
+});

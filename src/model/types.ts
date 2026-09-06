@@ -5,6 +5,44 @@ export type SampleChannel = "auto" | "alpha" | "luminance";
 export type Matrix = [number, number, number, number, number, number];
 export type MaskShape = "none" | "circle" | "triangle" | "square" | "octagon" | "polygon";
 export type CellShape = "square" | "circle" | "triangle" | "line" | "diamond" | "hexagon" | "octagon" | "polygon";
+export type CellAnimation = "none" | "pulse" | "rotate" | "wave";
+export type AnimationAxis = "x" | "y";
+export type AnimationStaggerBy = "none" | "column" | "row" | "index";
+export type KeyframeProperty = "x" | "y" | "scale" | "rotation" | "opacity";
+export type KeyframeEasing = [number, number, number, number];
+
+export interface AnimationKeyframe {
+  time: number;
+  value: number;
+  /** Cubic Bézier for the outgoing segment to the next key. Last-key easing is retained but unused. */
+  easing: KeyframeEasing;
+}
+
+export interface KeyframeTrack {
+  /** "all" or a stable cell:repeatIndex:row:column address. */
+  target: string;
+  property: KeyframeProperty;
+  keyframes: AnimationKeyframe[];
+}
+
+export interface KeyframePose {
+  x: number;
+  y: number;
+  scale: number;
+  rotation: number;
+  opacity: number;
+}
+
+export interface CellAnimationOverride {
+  id: string;
+  animation?: CellAnimation;
+  animationDuration?: number;
+  animationAmount?: number;
+  animationPhase?: number;
+  animationAxis?: AnimationAxis;
+  animationStagger?: number;
+  animationStaggerBy?: AnimationStaggerBy;
+}
 
 export interface LayoutCellOverride {
   index: number;
@@ -95,7 +133,15 @@ export interface PatternParams {
   scale: number;
   offsetX: number;
   offsetY: number;
-  animation: "none" | "pulse" | "rotate" | "wave";
+  animation: CellAnimation;
+  animationAxis: AnimationAxis;
+  animationStagger: number;
+  animationStaggerBy: AnimationStaggerBy;
+  cellAnimations: CellAnimationOverride[];
+  keyframeDuration: number;
+  keyframeLoop: boolean;
+  keyframeTracks: KeyframeTrack[];
+  animationTime: number;
   animationDuration: number;
   animationAmount: number;
   animationPhase: number;
@@ -130,6 +176,23 @@ export interface PatternPrimitive {
   opacity: number;
   points?: [number, number][];
   path?: string;
+  entityId?: string;
+}
+
+export interface CellEntity {
+  id: string;
+  repeatIndex: number;
+  row: number;
+  column: number;
+  /** Rest and posed centers are in output coordinates, after static scene placement. */
+  rest: { x: number; y: number };
+  /** x/y are output-space centers; scale/rotation are cell-local animated deltas after the authored rest shape. */
+  pose: { x: number; y: number; scale: number; rotation: number; opacity: number; phase: number };
+  selected: boolean;
+  visible: boolean;
+  hiddenReason: "source" | "pattern-clip" | "repeat-bounds" | "canvas-bounds" | "collapsed" | "opacity" | null;
+  /** Complete output/canvas-space geometry. Selected cells retain it even when boundary-culled. */
+  primitive: PatternPrimitive | null;
 }
 
 export interface PatternGradient {
@@ -152,6 +215,8 @@ export interface PatternFrame {
   mask?: VectorMask;
   masks?: VectorMask[];
   layers?: PatternFrame[];
+  /** Flat, stable rest-grid entity list on the root frame when useCells is enabled. */
+  entities?: CellEntity[];
 }
 
 export interface SourceSample {
@@ -163,7 +228,7 @@ export interface SourceSample {
 }
 
 export interface PatternProject {
-  app: "Pattern Lab";
+  app: "Taxis";
   version: 3;
   fingerprint: string;
   params: PatternParams;

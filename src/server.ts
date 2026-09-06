@@ -142,4 +142,4 @@ if (configuredPort === undefined && server.port !== preferredPort) {
   console.warn(`Port ${preferredPort} is in use; using port ${server.port} instead.`);
 }
 
-console.log(`Pattern Lab running at ${server.url}`);
+console.log(`Taxis running at ${server.url}`);

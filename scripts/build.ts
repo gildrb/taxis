@@ -30,7 +30,7 @@ async function acquireBuildLock(): Promise<void> {
       await delay(50);
     }
   }
-  throw new Error("Another Pattern Lab build did not finish within 30 seconds.");
+  throw new Error("Another Taxis build did not finish within 30 seconds.");
 }
 
 async function buildLockIsStale(): Promise<boolean> {

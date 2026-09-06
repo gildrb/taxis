@@ -2,11 +2,21 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="theme-color" content="#1b1b1c" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#161617" />
     <meta name="color-scheme" content="dark" />
-    <meta name="description" content="Turn images into deterministic line-raster and geometric pattern textures in your browser." />
-    <title>Pattern Lab — deterministic image textures</title>
+    <meta name="description" content="Create deterministic vector patterns with Taxis. Transform images, tune geometry, and export artwork locally in your browser." />
+    <title>Taxis — deterministic vector patterns</title>
+    <style>
+      @font-face {
+        font-family: Inter;
+        src: url("/public/fonts/InterVariable.woff2") format("woff2");
+        font-style: normal;
+        font-weight: 100 900;
+        font-display: swap;
+      }
+    </style>
+    <link rel="preload" href="/public/fonts/InterVariable.woff2" as="font" type="font/woff2" crossorigin />
     <link rel="icon" href="/public/pattern-mark.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="/src/global.css" />
     <script type="module" src="/src/main.tsx"></script>

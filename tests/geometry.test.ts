@@ -19,7 +19,7 @@ function rgb(hex: string): number[] {
 }
 
 function input(overrides: Partial<PatternParams> = {}, source = createRadialSource(128), time?: number): RenderInput {
-  return { params: { ...DEFAULT_PARAMS, ...overrides }, source, time };
+  return { params: { ...DEFAULT_PARAMS, useCells: false, width: 720, height: 720, ...overrides }, source, time };
 }
 
 function rounded(value: number): number {
@@ -662,4 +662,34 @@ describe("portable native scene contract", () => {
     expect(renderScene({ ...model, time: 4.75 }, renderer, "rgba")).toEqual(raster);
     expect(renderScene({ ...model, time: 1.75 }, renderer, "rgba").pixels).not.toEqual(raster.pixels);
   });
+});
+
+
+test("native Kor paints each cell's posed vectors and exports matching PNG/RGBA/SVG", () => {
+  const model = input({ useCells: true, sourceMode: "ignore", width: 100, height: 100, cellSize: 20, cellPadding: 4,
+    cellShape: "triangle", animation: "wave", animationAmount: 0.5, animationAxis: "y", animationStagger: 0.125,
+    cellAnimations: [{ id: "cell:0:2:2", animation: "rotate", animationDuration: 2 }],
+    transparent: true }, createRadialSource(32), 0.5);
+  const frame = generatePattern(model);
+  const svg = renderScene(model, renderer, "svg");
+  const text = new TextDecoder().decode(svg);
+  expect(text).toContain('data-cell-id="cell:0:2:2"');
+  expect(text.match(/<polygon /g)).toHaveLength(frame.primitives.length);
+  expect(text).not.toMatch(/<(?:image|mask|clipPath) /);
+  const raster = renderScene(model, renderer, "rgba");
+  const png = renderScene(model, renderer, "png");
+  const document = renderer.createDocument(svg);
+  try {
+    expect(document.render(100, 100).pixels).toEqual(raster.pixels);
+    expect(document.png(100, 100)).toEqual(png);
+  } finally { document.dispose(); }
+  expect(raster.pixels).not.toEqual(renderScene({ ...model, time: 1 }, renderer, "rgba").pixels);
+  expect(raster.pixels).toEqual(renderScene({ ...model, params: { ...model.params, animationTime: 0.5 }, time: 0 }, renderer, "rgba").pixels);
+  expect(Array.from(png.slice(0, 8))).toEqual([137, 80, 78, 71, 13, 10, 26, 10]);
+  for (const entity of frame.entities!.filter((entity) => entity.visible)) {
+    const points = entity.primitive!.points!;
+    const x = Math.floor(points.reduce((sum, point) => sum + point[0], 0) / points.length);
+    const y = Math.floor(points.reduce((sum, point) => sum + point[1], 0) / points.length);
+    expect(pixel(raster, x, y)[3]).toBe(255);
+  }
 });

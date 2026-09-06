@@ -1,7 +1,10 @@
 import { geometricMask, geometricMaskContains, maskForSource, sampleSource, sourceCoverage } from "./source";
 import { canonicalizePatternParams, projectFingerprint } from "./params";
+import { createKeyframeEvaluator, type KeyframeEvaluator } from "./keyframes";
 import { multiplyMatrices, parseVectorMask } from "./svg-mask";
 import type {
+  CellAnimationOverride,
+  CellEntity,
   Matrix,
   PatternFrame,
   PatternGradient,
@@ -53,6 +56,7 @@ interface PatternMotion {
 }
 
 interface LayoutCell {
+  index: number;
   params: PatternParams;
   motion: PatternMotion;
   copyMotion: PatternMotion;
@@ -61,7 +65,9 @@ interface LayoutCell {
 
 export function generatePattern(input: RenderInput): PatternFrame {
   const { params } = input;
-  const globalMotion = patternMotion(params, input.time ?? 0);
+  const time = params.animationTime + (input.time ?? 0);
+  // Cell animation belongs to each entity. Scene placement never pulses or rotates the whole cell field.
+  const globalMotion = patternMotion(params.useCells ? { ...params, animation: "none" } : params, time);
   const availableWidth = params.width - params.paddingLeft - params.paddingRight - (params.layoutColumns - 1) * params.layoutGapX;
   const availableHeight = params.height - params.paddingTop - params.paddingBottom - (params.layoutRows - 1) * params.layoutGapY;
   if (availableWidth <= 0 || availableHeight <= 0) {
@@ -112,13 +118,17 @@ export function generatePattern(input: RenderInput): PatternFrame {
     if (totalPrimitives > MAX_PRIMITIVES) throw new Error("This layout can create more than 25,000 shapes or mask paths. Increase Cell Size, reduce subdivisions/radial repeats, or simplify the source SVG.");
     const [a, b, c, d, e, f] = localMotion.transform;
     const copyMotion: PatternMotion = { phase: globalMotion.phase, transform: [a, b, c, d, e - left, f - top] };
-    cells.push({ params: local, motion, copyMotion, clip });
+    cells.push({ index, params: local, motion, copyMotion, clip });
   }
   const background = params.transparent ? null
     : params.colorMode === "custom" || params.colorMode === "gradient" ? params.backgroundColor : "#000000";
-  const frames = cells.map((cell) => generateForm(input, cell));
-  if (count === 1) return { ...frames[0]!, background };
-  return { width: params.width, height: params.height, background, primitives: [], layers: frames };
+  const entities: CellEntity[] = [];
+  const animations = new Map(params.useCells ? params.cellAnimations.map((animation) => [animation.id, animation]) : []);
+  const keyframes = params.useCells && params.keyframeTracks.length > 0 ? createKeyframeEvaluator(params) : undefined;
+  const frames = cells.map((cell) => generateForm({ ...input, time }, cell, entities, animations, keyframes));
+  const metadata = params.useCells ? { entities } : {};
+  if (count === 1) return { ...frames[0]!, background, ...metadata };
+  return { width: params.width, height: params.height, background, primitives: [], layers: frames, ...metadata };
 }
 
 function patternBudget(params: PatternParams): [number, number] {
@@ -146,7 +156,8 @@ function patternBudget(params: PatternParams): [number, number] {
   return [cells, cells * perCell];
 }
 
-function generateForm(input: RenderInput, cell: LayoutCell): PatternFrame {
+function generateForm(input: RenderInput, cell: LayoutCell, entities: CellEntity[],
+  animations: ReadonlyMap<string, CellAnimationOverride>, keyframes?: KeyframeEvaluator): PatternFrame {
   const { params, motion } = cell;
   const masks: VectorMask[] = [];
   if (!params.useCells) {
@@ -170,7 +181,7 @@ function generateForm(input: RenderInput, cell: LayoutCell): PatternFrame {
     ...(transformed.length > 1 ? { masks: transformed.slice(1) } : {}),
   };
   const localInput = { ...input, params };
-  if (params.useCells) generateWholeCells(frame, localInput, cell);
+  if (params.useCells) generateWholeCells(frame, localInput, cell, entities, animations, keyframes);
   else if (params.preset === "stripes") generateStripes(frame, localInput, motion);
   else if (params.preset === "radial") generateRays(frame, localInput, motion);
   else if (params.preset === "rings") generateRings(frame, localInput, motion);
@@ -178,7 +189,8 @@ function generateForm(input: RenderInput, cell: LayoutCell): PatternFrame {
   return frame;
 }
 
-function generateWholeCells(frame: PatternFrame, input: RenderInput, cell: LayoutCell): void {
+function generateWholeCells(frame: PatternFrame, input: RenderInput, cell: LayoutCell, entities: CellEntity[],
+  animations: ReadonlyMap<string, CellAnimationOverride>, keyframes?: KeyframeEvaluator): void {
   const { params } = input;
   const pitchX = params.cellSize + params.cellGapX;
   const pitchY = params.cellSize + params.cellGapY;
@@ -190,42 +202,88 @@ function generateWholeCells(frame: PatternFrame, input: RenderInput, cell: Layou
   const template = cellPolygon(params, side);
   const axisAligned = (params.cellShape === "square" || params.cellShape === "line") && params.cellRotation === 0;
   for (let row = 0; row < rows; row++) {
-    const shift = rowDisplacement(row, rows, params, cell.motion.phase);
+    const shift = rowDisplacement(row, rows, params, 0, false);
     for (let column = 0; column < columns; column++) {
+      const id = `cell:${cell.index}:${row}:${column}`;
+      // This rest-grid address and sample position never depend on time or visibility.
       const cx = left + params.cellSize / 2 + column * pitchX + shift + noise(params.seed, row, column, 0) * params.jitter * params.cellSize;
       const cy = top + params.cellSize / 2 + row * pitchY + noise(params.seed, row, column, 1) * params.jitter * params.cellSize;
-      // Pattern clips choose WHOLE cells by center. No spatial clips enter a whole-cell frame.
-      if (!geometricMaskContains(params, cx, cy)) continue;
-      if (params.sourceMode === "mask" && sourceCoverage(input.source, cx, cy, params) < params.cellThreshold) continue;
+      const override = animations.get(id);
+      const animation = override?.animation ?? params.animation;
+      const duration = override?.animationDuration ?? params.animationDuration;
+      const amount = override?.animationAmount ?? params.animationAmount;
+      const authoredPhase = override?.animationPhase ?? params.animationPhase;
+      const axis = override?.animationAxis ?? params.animationAxis;
+      const staggerBy = override?.animationStaggerBy ?? params.animationStaggerBy;
+      const staggerIndex = staggerBy === "column" ? column : staggerBy === "row" ? row : staggerBy === "index" ? row * columns + column : 0;
+      const stagger = animation === "wave" ? (override?.animationStagger ?? params.animationStagger) * staggerIndex : 0;
+      const elapsed = animation === "none" ? 0 : (input.time ?? 0) / duration;
+      const phase = Number((((authoredPhase + elapsed + stagger) % 1 + 1) % 1).toFixed(12)) % 1;
+      const keyed = keyframes?.(id, input.time ?? 0);
+      const scale = (animation === "pulse" ? 1 + amount * Math.sin(phase * Math.PI * 2) : 1) * (keyed?.scale ?? 1);
+      const rotation = (animation === "rotate" ? phase * 360 : 0) + (keyed?.rotation ?? 0);
+      const opacity = keyed?.opacity ?? 1;
+      const displacement = animation === "wave" ? Math.sin(phase * Math.PI * 2) * amount * params.cellSize : 0;
+      const x = cx + (axis === "x" ? displacement : 0) + (keyed?.x ?? 0);
+      const y = cy + (axis === "y" ? displacement : 0) + (keyed?.y ?? 0);
+      const [restX, restY] = transformPoint(cx, cy, cell.motion);
+      const [poseX, poseY] = transformPoint(x, y, cell.motion);
+      const entity: CellEntity = { id, repeatIndex: cell.index, row, column,
+        rest: { x: restX, y: restY }, pose: { x: poseX, y: poseY, scale, rotation, opacity, phase },
+        selected: false, visible: false, hiddenReason: null, primitive: null };
+      entities.push(entity);
+      // Selection and paint belong to rest topology, not the animated sample position.
+      if (!geometricMaskContains(params, cx, cy)) {
+        entity.hiddenReason = "pattern-clip";
+        continue;
+      }
+      if (params.sourceMode === "mask" && sourceCoverage(input.source, cx, cy, params) < params.cellThreshold) {
+        entity.hiddenReason = "source";
+        continue;
+      }
       const paint = paintAt(input, cx, cy);
-      if (!paint || (params.sourceMode === "sample" && paint.value < params.cellThreshold)) continue;
+      if (!paint || (params.sourceMode === "sample" && paint.value < params.cellThreshold)) {
+        entity.hiddenReason = "source";
+        continue;
+      }
+      entity.selected = true;
+      const cosine = Number(Math.cos(rotation * Math.PI / 180).toFixed(12)) * scale;
+      const sine = Number(Math.sin(rotation * Math.PI / 180).toFixed(12)) * scale;
+      const localPose: Matrix = [cosine, sine, -sine, cosine, x - cosine * cx + sine * cy, y - sine * cx - cosine * cy];
+      const motion: PatternMotion = { phase, transform: multiplyMatrices(cell.motion.transform, localPose) };
+      const copyMotion: PatternMotion = { phase, transform: multiplyMatrices(cell.copyMotion.transform, localPose) };
       let primitive: PatternPrimitive;
+      let copyFits: boolean;
       if (params.cellShape === "circle") {
         const radius = side / 2;
-        const [a, b, c, d] = cell.copyMotion.transform;
-        const [copyX, copyY] = transformPoint(cx, cy, cell.copyMotion);
+        const [a, b, c, d] = copyMotion.transform;
+        const [copyX, copyY] = transformPoint(cx, cy, copyMotion);
         const halfWidth = radius * Math.hypot(a, c);
         const halfHeight = radius * Math.hypot(b, d);
-        if (!boundsInside(copyX - halfWidth, copyY - halfHeight, 2 * halfWidth, 2 * halfHeight, params.width, params.height)) continue;
-        primitive = annulusPrimitive(cx, cy, radius, 0, paint.color, paint.opacity, cell.motion);
+        copyFits = boundsInside(copyX - halfWidth, copyY - halfHeight, 2 * halfWidth, 2 * halfHeight, params.width, params.height);
+        primitive = annulusPrimitive(cx, cy, radius, 0, paint.color, paint.opacity, motion);
       } else {
         const local = template.map(([x, y]): Point => [cx + x, cy + y]);
-        const copy = local.map(([x, y]) => transformPoint(x, y, cell.copyMotion));
-        if (!copy.every(([x, y]) => boundsInside(x, y, 0, 0, params.width, params.height))) continue;
-        const points = local.map(([x, y]) => transformPoint(x, y, cell.motion));
+        const copy = local.map(([x, y]) => transformPoint(x, y, copyMotion));
+        copyFits = copy.every(([x, y]) => boundsInside(x, y, 0, 0, params.width, params.height));
+        const points = local.map(([x, y]) => transformPoint(x, y, motion));
         const x = Math.min(...points.map(([x]) => x));
         const y = Math.min(...points.map(([, y]) => y));
         const width = Math.max(...points.map(([x]) => x)) - x;
         const height = Math.max(...points.map(([, y]) => y)) - y;
-        const [a, b, c, d] = cell.motion.transform;
+        const [a, b, c, d] = motion.transform;
         primitive = { x, y, width, height, color: paint.color, opacity: paint.opacity,
           ...(axisAligned && b === 0 && c === 0 && a >= 0 && d >= 0 ? {} : { points }) };
       }
-      // Copy transforms and the final canvas edge can discard a cell, but never cut it.
-      if (primitive.width > 0 && primitive.height > 0
-        && boundsInside(primitive.x, primitive.y, primitive.width, primitive.height, frame.width, frame.height)) {
-        frame.primitives.push(primitive);
-      }
+      primitive.opacity *= opacity;
+      primitive.entityId = id;
+      entity.primitive = primitive;
+      // Retain full geometry and stable IDs when a posed cell is invisible. Never cut a cell.
+      entity.hiddenReason = primitive.opacity === 0 ? "opacity" : primitive.width <= 1e-8 || primitive.height <= 1e-8 ? "collapsed"
+        : !copyFits ? "repeat-bounds"
+          : !boundsInside(primitive.x, primitive.y, primitive.width, primitive.height, frame.width, frame.height) ? "canvas-bounds" : null;
+      entity.visible = entity.hiddenReason === null;
+      if (entity.visible) frame.primitives.push(primitive);
     }
   }
 }
@@ -461,10 +519,10 @@ function appendPolygon(primitives: PatternPrimitive[], points: Point[], color: s
   primitives.push({ x, y, width: Math.max(...xs) - x, height: Math.max(...ys) - y, points, color, opacity });
 }
 
-function rowDisplacement(row: number, rows: number, params: PatternParams, phase: number): number {
+function rowDisplacement(row: number, rows: number, params: PatternParams, phase: number, animated = true): number {
   const stagger = params.rowShiftMode === "alternating" ? (row % 2 === 0 ? -0.5 : 0.5) * params.rowShift
     : Math.sin(row * Math.PI * 2 / 7) * params.rowShift;
-  const wave = params.animation === "wave" ? Math.sin((phase + row / Math.max(1, rows)) * Math.PI * 2)
+  const wave = animated && params.animation === "wave" ? Math.sin((phase + row / Math.max(1, rows)) * Math.PI * 2)
     * params.animationAmount * params.cellSize : 0;
   return stagger + wave;
 }
@@ -501,6 +559,7 @@ export function patternToSvg(input: RenderInput): string {
   const metadata = escapeXml(JSON.stringify({
     ...project,
     time: input.time ?? 0,
+    evaluatedTime: input.params.animationTime + (input.time ?? 0),
     source: {
       name: project.source.name,
       fingerprint: project.source.fingerprint,
@@ -538,7 +597,7 @@ function frameToSvg(frame: PatternFrame, prefix: string, definitions: string[]):
   for (const shape of frame.primitives) {
     if (shape.opacity <= 0 || shape.width <= 0 || shape.height <= 0) continue;
     const color = shape.color === "url(#pattern-gradient)" ? `url(#${gradientId})` : shape.color;
-    const paint = `fill="${escapeXml(color)}"${shape.opacity < 1 ? ` opacity="${format(shape.opacity)}"` : ""}`;
+    const paint = `fill="${escapeXml(color)}"${shape.opacity < 1 ? ` opacity="${format(shape.opacity)}"` : ""}${shape.entityId ? ` data-cell-id="${escapeXml(shape.entityId)}"` : ""}`;
     if (shape.path) elements.push(`  <path d="${escapeXml(shape.path)}" ${paint}/>`);
     else if (shape.points) elements.push(`  <polygon points="${shape.points.map(([x, y]) => `${format(x)},${format(y)}`).join(" ")}" ${paint}/>`);
     else elements.push(`  <rect x="${format(shape.x)}" y="${format(shape.y)}" width="${format(shape.width)}" height="${format(shape.height)}" ${paint}/>`);
@@ -555,7 +614,7 @@ export function projectFor(input: RenderInput): PatternProject {
   const { params, source } = input;
   const canonicalParams = canonicalizePatternParams(params);
   return {
-    app: "Pattern Lab",
+    app: "Taxis",
     version: 3,
     fingerprint: projectFingerprint(canonicalParams, source),
     params: canonicalParams,

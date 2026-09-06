@@ -1,7 +1,7 @@
 import * as stylex from "@stylexjs/stylex";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { PRESETS, type PatternRecipe } from "../model/params";
-import type { LayoutCellOverride, PatternParams, SourceData } from "../model/types";
+import type { CellAnimationOverride, LayoutCellOverride, PatternFrame, PatternParams, SourceData } from "../model/types";
 import { controlStyles } from "../styles/Controls.stylex";
 import { sharedStyles } from "../styles/shared.stylex";
 import { Icon } from "./Icon";
@@ -42,6 +42,9 @@ interface ControlsProps {
   selected: PanelSelection;
   params: PatternParams;
   source: SourceData;
+  entities: NonNullable<PatternFrame["entities"]>;
+  selectedCellId?: string;
+  onSelectCell: (id?: string) => void;
   onChange: <Key extends keyof PatternParams>(key: Key, value: PatternParams[Key]) => void;
   onChangeEnd: () => void;
   onChangeStart: () => void;
@@ -250,19 +253,27 @@ function PanelHeader({ selected }: { selected: PanelSelection }) {
   );
 }
 
-export function Controls({ selected, params, source, onChange, onChangeEnd, onChangeStart, renderError, onSelect, onPreset, onChooseSource, playing = false, onTogglePlayback, onResetPlayback }: ControlsProps) {
+export function Controls({ selected, params, source, entities, selectedCellId, onSelectCell, onChange, onChangeEnd, onChangeStart, renderError, onSelect, onPreset, onChooseSource, playing = false, onTogglePlayback, onResetPlayback }: ControlsProps) {
+  const matchingPreset = PRESETS.find((recipe) => Object.entries(recipe.params).every(([key, value]) => JSON.stringify(params[key as keyof PatternParams]) === JSON.stringify(value)));
   const atlasPattern = params.preset === "bars" || params.preset === "candles" || params.preset === "shapes";
   const supportsMask = params.useCells || source.kind === "radial" || Boolean(source.vectorMask);
   const preciseSourceMask = params.sourceMode === "mask" && !params.useCells;
   const maskUnavailable = !supportsMask || !params.useCells && params.symmetry !== "none";
   const [selectedRepeat, setSelectedRepeat] = useState(0);
+  const cellOverride = params.cellAnimations.find((cell) => cell.id === selectedCellId);
+  const selectedEntity = entities.find((cell) => cell.id === selectedCellId);
+  const cellAddress = (selectedCellId ?? "cell:0:0:0").split(":").slice(1).map(Number);
+  const motion = { ...params, ...cellOverride };
+  const visibleCellCount = entities.filter((cell) => cell.visible).length;
+  const entityIds = new Set(entities.map((cell) => cell.id));
+  const inactiveOverrideCount = params.cellAnimations.filter((cell) => !entityIds.has(cell.id)).length;
   const repeatCount = params.layoutColumns * params.layoutRows;
   const selectedRepeatIndex = Math.min(selectedRepeat, repeatCount - 1);
   const repeatOverride = params.layoutCells.find((cell) => cell.index === selectedRepeatIndex);
   const repeatClipShape = repeatOverride?.maskShape ?? params.maskShape;
   const hasRepeatClip = params.layoutCells.some((cell) => cell.index < repeatCount && cell.maskShape !== undefined && cell.maskShape !== "none");
   const hasPolygonClip = params.maskShape === "polygon" || params.layoutCells.some((cell) => cell.index < repeatCount && cell.maskShape === "polygon");
-  const disclosuresRef = useRef({ asymmetry: false, radial: false, gradient: false, repeatSpacing: false, individualRepeat: false, clip: false, repeat: false });
+  const disclosuresRef = useRef({ asymmetry: false, radial: false, gradient: false, repeatSpacing: false, individualRepeat: false, clip: false, repeat: false, motionTimeline: false, motionCell: false, motionInheritance: false });
   const propertiesScrollRef = useRef<HTMLDivElement>(null);
   const scrollPositionsRef = useRef<Record<PanelSelection, number>>({ pattern: 0, source: 0, canvas: 0 });
 
@@ -276,6 +287,36 @@ export function Controls({ selected, params, source, onChange, onChangeEnd, onCh
     const repeats = params.layoutCells.filter((cell) => cell.index !== selectedRepeatIndex);
     if (Object.keys(nextRepeat).length > 1) repeats.push(nextRepeat);
     onChange("layoutCells", repeats.sort((first, second) => first.index - second.index));
+  };
+
+  const changeMotion = <Key extends Exclude<keyof CellAnimationOverride, "id">>(key: Key, value: PatternParams[Key]) => {
+    if (!selectedCellId) {
+      onChange(key, value);
+      return;
+    }
+    const next: CellAnimationOverride = { ...cellOverride, id: selectedCellId, [key]: value };
+    onChange("cellAnimations", [...params.cellAnimations.filter((cell) => cell.id !== selectedCellId), next]);
+  };
+
+  const motionInheritance = (key: Exclude<keyof CellAnimationOverride, "id">, label: string) => {
+    if (!selectedCellId) return null;
+    const inherited = cellOverride?.[key] === undefined;
+    return (
+      <div {...stylex.props(controlStyles.sectionActions)}>
+        <span {...stylex.props(controlStyles.helperCopy)}>{inherited ? `${label}: inherited (${params[key]})` : `${label}: overridden`}</span>
+        <button {...stylex.props(controlStyles.sourceButton, controlStyles.actionButton)} type="button" aria-label={`${inherited ? "Override" : "Use default"} ${label.toLowerCase()}`} onClick={() => {
+          if (inherited) {
+            changeMotion(key, params[key]);
+            return;
+          }
+          const next = { ...cellOverride, id: selectedCellId };
+          delete next[key];
+          const overrides = params.cellAnimations.filter((cell) => cell.id !== selectedCellId);
+          if (Object.keys(next).length > 1) overrides.push(next);
+          onChange("cellAnimations", overrides);
+        }}>{inherited ? "Override" : "Use default"}</button>
+      </div>
+    );
   };
 
   return (
@@ -321,27 +362,10 @@ export function Controls({ selected, params, source, onChange, onChangeEnd, onCh
               </label>
             </section>
             <section {...stylex.props(controlStyles.panelSection)}>
-              <h2 {...stylex.props(controlStyles.overline)}>Recipes</h2>
-              <div {...stylex.props(controlStyles.recipeGrid)} data-recipe-grid>
-                {PRESETS.map((preset) => (
-                  <button {...stylex.props(controlStyles.recipeButton)} key={preset.name} type="button" onFocus={(event) => event.currentTarget.scrollIntoView({ block: "nearest", inline: "nearest" })} onClick={() => onPreset(preset)}>
-                    <span {...stylex.props(
-                      controlStyles.recipePreview,
-                      preset.params.preset === "candles"
-                        ? controlStyles.candlesPreview
-                        : preset.params.preset === "shapes"
-                          ? controlStyles.shapesPreview
-                          : preset.params.preset === "radial"
-                            ? controlStyles.radialPreview
-                            : preset.params.preset === "rings"
-                              ? controlStyles.ringsPreview
-                              : controlStyles.barsPreview,
-                    )} style={{ backgroundColor: preset.params.backgroundColor }} aria-hidden="true" />
-                    <strong {...stylex.props(controlStyles.recipeName)}>{preset.name}</strong>
-                    <small {...stylex.props(controlStyles.recipeDetail)}>{preset.description}</small>
-                  </button>
-                ))}
-              </div>
+              <Select id="recipe" label="Recipe" value={matchingPreset?.name ?? "custom"} options={[{ value: "custom", label: "Custom", disabled: true }, ...PRESETS.map((preset) => ({ value: preset.name, label: preset.name }))]} onChange={(name) => {
+                const preset = PRESETS.find((recipe) => recipe.name === name);
+                if (preset) onPreset(preset);
+              }} />
             </section>
 
             <section {...stylex.props(controlStyles.panelSection)}>
@@ -362,7 +386,6 @@ export function Controls({ selected, params, source, onChange, onChangeEnd, onCh
                 {params.cellShape === "polygon" && <RangeControl onChangeEnd={onChangeEnd} onChangeStart={onChangeStart} stacked id="cell-sides" label="Cell sides" value={params.cellSides} min={3} max={32} step={1} onChange={(value) => onChange("cellSides", value)} />}
                 {params.cellShape !== "circle" && <RangeControl onChangeEnd={onChangeEnd} onChangeStart={onChangeStart} stacked id="cell-rotation" label="Cell rotation" value={params.cellRotation} min={-180} max={180} step={1} unit="°" onChange={(value) => onChange("cellRotation", value)} />}
                 {params.sourceMode !== "ignore" && <RangeControl onChangeEnd={onChangeEnd} onChangeStart={onChangeStart} stacked id="cell-threshold" label="Cell threshold" value={params.cellThreshold} min={0} max={1} step={0.01} onChange={(value) => onChange("cellThreshold", value)} />}
-                <p {...stylex.props(controlStyles.helperCopy)}>Each slot contains one complete shape. Cell shape changes each small cell, not the outline of the pattern.</p>
               </> : <>
                 {atlasPattern
                   ? <RangeControl onChangeEnd={onChangeEnd} onChangeStart={onChangeStart} stacked id="motif-scale" label="Motif scale" value={params.motifScale} min={0.1} max={2} step={0.01} onChange={(value) => onChange("motifScale", value)} />
@@ -383,7 +406,7 @@ export function Controls({ selected, params, source, onChange, onChangeEnd, onCh
                 {params.preset === "rings" && <RangeControl onChangeEnd={onChangeEnd} onChangeStart={onChangeStart} stacked id="inner-radius" label="Inner radius" value={params.innerRadius} min={0} max={0.9} step={0.01} onChange={(value) => onChange("innerRadius", value)} />}
               </>}
               {(!params.useCells || params.sourceMode !== "ignore") && <Select id="symmetry" label="Symmetry" value={params.symmetry} describedBy={preciseSourceMask ? "symmetry-help" : undefined} options={[{ value: "none", label: "None" }, { value: "x", label: "X (left/right)", disabled: preciseSourceMask }, { value: "y", label: "Y (top/bottom)", disabled: preciseSourceMask }, { value: "both", label: "Both", disabled: preciseSourceMask }]} onChange={(value) => onChange("symmetry", value)} />}
-              {preciseSourceMask && <p {...stylex.props(controlStyles.helperCopy)} id="symmetry-help">Mask preserves the vector outline. Use Sample mode or Use cells for symmetry.</p>}
+              {preciseSourceMask && <p {...stylex.props(controlStyles.helperCopy)} id="symmetry-help">Symmetry requires Sample mode or Use cells.</p>}
             </section>
 
             {params.useCells && <section {...stylex.props(controlStyles.panelSection)}>
@@ -391,7 +414,6 @@ export function Controls({ selected, params, source, onChange, onChangeEnd, onCh
               <RangeControl onChangeEnd={onChangeEnd} onChangeStart={onChangeStart} id="cell-gap-x" label="Gap X" value={params.cellGapX} min={0} max={1024} step={1} unit="px" onChange={(value) => onChange("cellGapX", value)} />
               <RangeControl onChangeEnd={onChangeEnd} onChangeStart={onChangeStart} stacked id="cell-gap-y" label="Gap Y" value={params.cellGapY} min={0} max={1024} step={1} unit="px" onChange={(value) => onChange("cellGapY", value)} />
               <RangeControl onChangeEnd={onChangeEnd} onChangeStart={onChangeStart} stacked id="cell-padding" label="Cell padding" value={params.cellPadding} min={0} max={Math.min(128, params.cellSize / 2)} step={0.1} unit="px" onChange={(value) => onChange("cellPadding", value)} />
-              <p {...stylex.props(controlStyles.helperCopy)}>Gaps add space between cell slots. Padding shrinks each shape without moving its center.</p>
             </section>}
 
             <section {...stylex.props(controlStyles.panelSection)}>
@@ -401,7 +423,6 @@ export function Controls({ selected, params, source, onChange, onChangeEnd, onCh
               <RangeControl onChangeEnd={onChangeEnd} onChangeStart={onChangeStart} stacked id="pattern-scale-x" label="Scale X" value={params.patternScaleX} min={0.1} max={4} step={0.01} onChange={(value) => onChange("patternScaleX", value)} />
               <RangeControl onChangeEnd={onChangeEnd} onChangeStart={onChangeStart} stacked id="pattern-scale-y" label="Scale Y" value={params.patternScaleY} min={0.1} max={4} step={0.01} onChange={(value) => onChange("patternScaleY", value)} />
               <RangeControl onChangeEnd={onChangeEnd} onChangeStart={onChangeStart} stacked id="geometry-rotation" label="Rotation" value={params.rotation} min={-180} max={180} step={1} unit="°" onChange={(value) => onChange("rotation", value)} />
-              <p {...stylex.props(controlStyles.helperCopy)}>Scale and rotation use the pattern center. Cell Size changes internal detail.</p>
             </section>
 
             <details {...stylex.props(controlStyles.panelSection, controlStyles.disclosureSection)} open={disclosuresRef.current.clip} onToggle={(event) => { disclosuresRef.current.clip = event.currentTarget.open; }}>
@@ -413,7 +434,6 @@ export function Controls({ selected, params, source, onChange, onChangeEnd, onCh
                   <RangeControl onChangeEnd={onChangeEnd} onChangeStart={onChangeStart} stacked id="mask-scale" label="Clip scale" value={params.maskScale} min={0.1} max={1} step={0.01} onChange={(value) => onChange("maskScale", value)} />
                   <RangeControl onChangeEnd={onChangeEnd} onChangeStart={onChangeStart} stacked id="mask-rotation" label="Clip rotation" value={params.maskRotation} min={-180} max={180} step={1} unit="°" onChange={(value) => onChange("maskRotation", value)} />
                 </>}
-                <p {...stylex.props(controlStyles.helperCopy)}>{params.useCells ? "Selects complete cells by their centers. This boundary does not change the shape of each cell." : "Clips the whole pattern, not the individual shapes inside it. The background stays unchanged."}</p>
               </div>
             </details>
 
@@ -430,7 +450,6 @@ export function Controls({ selected, params, source, onChange, onChangeEnd, onCh
                     <span {...stylex.props(controlStyles.dimensionInput)}><NumericInput ariaLabel="Repeat rows" dimension id="repeat-rows" integer max={12} min={1} name="repeat-rows" onChange={(value) => onChange("layoutRows", value)} step={1} value={params.layoutRows} /></span>
                   </label>
                 </div>
-                <p {...stylex.props(controlStyles.helperCopy)}>These controls copy the whole pattern. They do not change the spacing between small cells.</p>
                 <details {...stylex.props(controlStyles.nestedDisclosure)} open={disclosuresRef.current.repeatSpacing} onToggle={(event) => { disclosuresRef.current.repeatSpacing = event.currentTarget.open; }}>
                   <summary {...stylex.props(controlStyles.disclosureSummary)}>Repeat spacing &amp; outer padding</summary>
                   <div {...stylex.props(controlStyles.disclosureBody)}>
@@ -450,7 +469,7 @@ export function Controls({ selected, params, source, onChange, onChangeEnd, onCh
                       label="Repeat selector"
                       stacked
                       value={selectedRepeatIndex}
-                      options={Array.from({ length: repeatCount }, (_, index) => ({ value: index, label: `${index + 1} · Row ${Math.floor(index / params.layoutColumns) + 1}, column ${index % params.layoutColumns + 1}` }))}
+                      options={Array.from({ length: repeatCount }, (_, index) => ({ value: index, label: `${index + 1}: Row ${Math.floor(index / params.layoutColumns) + 1}, column ${index % params.layoutColumns + 1}` }))}
                       onChange={setSelectedRepeat}
                     />}
                     <div key={selectedRepeatIndex}>
@@ -479,13 +498,10 @@ export function Controls({ selected, params, source, onChange, onChangeEnd, onCh
                         <RangeControl onChangeEnd={onChangeEnd} onChangeStart={onChangeStart} stacked id="repeat-clip-scale" label="Repeat clip scale" value={repeatOverride?.maskScale ?? params.maskScale} min={0.1} max={1} step={0.01} onChange={(value) => changeRepeat("maskScale", value)} />
                         <RangeControl onChangeEnd={onChangeEnd} onChangeStart={onChangeStart} stacked id="repeat-clip-rotation" label="Repeat clip rotation" value={repeatOverride?.maskRotation ?? params.maskRotation} min={-180} max={180} step={1} unit="°" onChange={(value) => changeRepeat("maskRotation", value)} />
                       </>}
-                      {repeatClipShape === "polygon" && <p {...stylex.props(controlStyles.helperCopy)}>Clip sides is shared across repeats. Set it in Pattern clip.</p>}
                       <RangeControl onChangeEnd={onChangeEnd} onChangeStart={onChangeStart} stacked id="repeat-padding" label="Repeat padding" value={repeatOverride?.padding ?? 0} min={0} max={1024} step={1} unit="px" onChange={(value) => changeRepeat("padding", value)} />
-                      <p {...stylex.props(controlStyles.helperCopy)}>Repeat edits apply before the global Transform. Unedited clip settings follow Pattern clip; repeat padding adds an inner inset.</p>
                     </div>
                   </div>
                 </details>}
-                {params.layoutCells.some((cell) => cell.index >= repeatCount) && <p {...stylex.props(controlStyles.helperCopy)}>Repeats outside this layout keep their saved edits.</p>}
               </div>
             </details>
 
@@ -504,7 +520,6 @@ export function Controls({ selected, params, source, onChange, onChangeEnd, onCh
                   <label {...stylex.props(controlStyles.fieldLabel)} htmlFor="jitter-seed">Jitter seed</label>
                   <span {...stylex.props(controlStyles.numberField)}><NumericInput ariaLabel="Jitter seed" id="jitter-seed" integer max={99999} min={0} name="jitter-seed" onChange={(value) => onChange("seed", value)} step={1} value={params.seed} /></span>
                 </div>
-                <p {...stylex.props(controlStyles.helperCopy)}>Zero row shift, twist and jitter preserve the base geometry. The same jitter seed gives the same result.</p>
               </div>
             </details>
 
@@ -555,17 +570,77 @@ export function Controls({ selected, params, source, onChange, onChangeEnd, onCh
 
             <section {...stylex.props(controlStyles.panelSection, controlStyles.lastPanelSection)}>
               <h2 {...stylex.props(controlStyles.overline)}>Motion</h2>
-              <Select id="animation" label="Animation" value={params.animation} options={[{ value: "none", label: "None" }, { value: "pulse", label: "Pulse" }, { value: "rotate", label: "Rotate" }, { value: "wave", label: "Wave" }]} onChange={(value) => onChange("animation", value)} />
-              {params.animation !== "none" && <>
-                <RangeControl onChangeEnd={onChangeEnd} onChangeStart={onChangeStart} stacked id="animation-duration" label="Duration" value={params.animationDuration} min={0.5} max={30} step={0.01} unit="s" onChange={(value) => onChange("animationDuration", value)} />
-                {params.animation !== "rotate" && <RangeControl onChangeEnd={onChangeEnd} onChangeStart={onChangeStart} stacked id="animation-amount" label="Amount" value={params.animationAmount} min={0} max={1} step={0.01} onChange={(value) => onChange("animationAmount", value)} />}
-                <RangeControl onChangeEnd={onChangeEnd} onChangeStart={onChangeStart} stacked id="animation-phase" label="Loop phase" value={params.animationPhase} min={0} max={1} step={0.001} onChange={(value) => onChange("animationPhase", value)} />
-                <div {...stylex.props(controlStyles.sectionActions)}>
-                  <button {...stylex.props(controlStyles.sourceButton, controlStyles.actionButton)} type="button" disabled={!onTogglePlayback} onClick={onTogglePlayback}>{playing ? "Pause" : "Play"}</button>
-                  <button {...stylex.props(controlStyles.sourceButton, controlStyles.actionButton)} type="button" disabled={!onResetPlayback} onClick={onResetPlayback}>Reset phase</button>
-                </div>
+              {selectedCellId && <>
+                <p {...stylex.props(controlStyles.helperCopy)} role="status">Editing cell: repeat {(cellAddress[0] ?? 0) + 1}, row {(cellAddress[1] ?? 0) + 1}, column {(cellAddress[2] ?? 0) + 1}.</p>
+                <div {...stylex.props(controlStyles.sectionActions)}><button {...stylex.props(controlStyles.sourceButton, controlStyles.actionButton)} type="button" onClick={() => onSelectCell(undefined)}>Edit all cells</button></div>
               </>}
-              <p {...stylex.props(controlStyles.helperCopy)}>Playback starts only with Play. PNG and SVG export the current phase. Project files save motion settings.</p>
+              <div key={selectedCellId ?? "all"}>
+                <Select id="animation" label="Animation" value={motion.animation} options={[{ value: "none", label: "None" }, { value: "pulse", label: "Pulse" }, { value: "rotate", label: "Rotate" }, { value: "wave", label: "Wave" }]} onChange={(value) => changeMotion("animation", value)} />
+                {motion.animation !== "none" && <>
+                  <RangeControl onChangeEnd={onChangeEnd} onChangeStart={onChangeStart} stacked id="animation-duration" label="Duration" value={motion.animationDuration} min={0.5} max={30} step={0.01} unit="s" onChange={(value) => changeMotion("animationDuration", value)} />
+                  {motion.animation !== "rotate" && <RangeControl onChangeEnd={onChangeEnd} onChangeStart={onChangeStart} stacked id="animation-amount" label="Amount" value={motion.animationAmount} min={0} max={1} step={0.01} onChange={(value) => changeMotion("animationAmount", value)} />}
+                </>}
+                {motion.animation === "wave" && <>
+                  <Select id="animation-axis" label="Wave axis" value={motion.animationAxis} options={[{ value: "x", label: "X (horizontal)" }, { value: "y", label: "Y (vertical)" }]} onChange={(value) => changeMotion("animationAxis", value)} />
+                  <Select id="animation-stagger-by" label="Stagger by" value={motion.animationStaggerBy} options={[{ value: "column", label: "Column" }, { value: "row", label: "Row" }, { value: "index", label: "Cell index" }, { value: "none", label: "None" }]} onChange={(value) => changeMotion("animationStaggerBy", value)} />
+                  {motion.animationStaggerBy !== "none" && <RangeControl onChangeEnd={onChangeEnd} onChangeStart={onChangeStart} stacked id="animation-stagger" label="Phase step" value={motion.animationStagger} min={0} max={1} step={0.001} unit="cycles" onChange={(value) => changeMotion("animationStagger", value)} />}
+                </>}
+              </div>
+              <div {...stylex.props(controlStyles.sectionActions)}>
+                <button {...stylex.props(controlStyles.sourceButton, controlStyles.actionButton)} type="button" disabled={!onTogglePlayback} onClick={onTogglePlayback}>{playing ? "Pause" : "Play"}</button>
+                <button {...stylex.props(controlStyles.sourceButton, controlStyles.actionButton)} type="button" disabled={!onResetPlayback} onClick={onResetPlayback}>Reset timeline</button>
+              </div>
+              <details {...stylex.props(controlStyles.nestedDisclosure)} open={disclosuresRef.current.motionTimeline} onToggle={(event) => { disclosuresRef.current.motionTimeline = event.currentTarget.open; }}>
+                <summary {...stylex.props(controlStyles.disclosureSummary)}>Timeline &amp; phase</summary>
+                <div {...stylex.props(controlStyles.disclosureBody)}>
+                  <div {...stylex.props(controlStyles.selectControl)}>
+                    <label {...stylex.props(controlStyles.fieldLabel)} htmlFor="animation-time">Timeline</label>
+                    <span {...stylex.props(controlStyles.numberField)}><NumericInput ariaLabel="Timeline seconds" id="animation-time" max={86400} min={0} name="animation-time" onChange={(value) => onChange("animationTime", value)} step={0.001} value={params.animationTime} /><span {...stylex.props(controlStyles.numberUnit)}>s</span></span>
+                  </div>
+                  {motion.animation !== "none" && <RangeControl onChangeEnd={onChangeEnd} onChangeStart={onChangeStart} stacked id="animation-phase" label="Loop phase" value={motion.animationPhase} min={0} max={1} step={0.001} unit="cycles" onChange={(value) => changeMotion("animationPhase", value)} />}
+                </div>
+              </details>
+              <details {...stylex.props(controlStyles.nestedDisclosure)} open={disclosuresRef.current.motionCell} onToggle={(event) => { disclosuresRef.current.motionCell = event.currentTarget.open; }}>
+                <summary {...stylex.props(controlStyles.disclosureSummary)}>Individual cell</summary>
+                <div {...stylex.props(controlStyles.disclosureBody)}>
+                  <Select id="animation-target" label="Apply to" value={selectedCellId ? "cell" : "all"} options={[{ value: "all", label: "All cells" }, { value: "cell", label: "Individual cell" }]} onChange={(value) => onSelectCell(value === "all" ? undefined : entities.find((cell) => cell.visible)?.id ?? entities[0]?.id ?? "cell:0:0:0")} />
+                  <p {...stylex.props(controlStyles.helperCopy)}>{visibleCellCount.toLocaleString()} / {entities.length.toLocaleString()} cells visible, {params.cellAnimations.length.toLocaleString()} overrides</p>
+                  {!params.useCells && <p {...stylex.props(controlStyles.helperCopy)}>Cell motion requires Use cells.</p>}
+                  {selectedCellId && <>
+                    <div {...stylex.props(controlStyles.dimensionGrid, controlStyles.stackedPropertyRow)}>
+                      {(["Repeat", "Row", "Column"] as const).map((label, index) => (
+                        <label {...stylex.props(controlStyles.dimensionLabel)} key={label} htmlFor={`motion-cell-${label.toLowerCase()}`}>
+                          <span {...stylex.props(controlStyles.fieldLabel)}>{label}</span>
+                          <span {...stylex.props(controlStyles.dimensionInput)}><NumericInput ariaLabel={`Cell ${label.toLowerCase()}`} dimension id={`motion-cell-${label.toLowerCase()}`} integer max={index === 0 ? 144 : 1024} min={1} name={`motion-cell-${label.toLowerCase()}`} step={1} value={(cellAddress[index] ?? 0) + 1} onChange={(value) => {
+                            const address = [...cellAddress];
+                            address[index] = value - 1;
+                            onSelectCell(`cell:${address.join(":")}`);
+                          }} /></span>
+                        </label>
+                      ))}
+                    </div>
+                    <p {...stylex.props(controlStyles.helperCopy)} role="status">
+                      {selectedCellId}: {selectedEntity
+                        ? selectedEntity.visible ? "Visible" : selectedEntity.hiddenReason === "source" ? "Excluded by source" : `Hidden: ${selectedEntity.hiddenReason?.replaceAll("-", " ") ?? "not visible"}`
+                        : "Outside current grid"}
+                    </p>
+                    <div {...stylex.props(controlStyles.sectionActions)}><button {...stylex.props(controlStyles.sourceButton, controlStyles.actionButton)} type="button" disabled={!cellOverride} onClick={() => onChange("cellAnimations", params.cellAnimations.filter((cell) => cell.id !== selectedCellId))}>Reset selected cell</button></div>
+                  </>}
+                  {inactiveOverrideCount > 0 && <p {...stylex.props(controlStyles.helperCopy)}>{inactiveOverrideCount.toLocaleString()} inactive overrides</p>}
+                  {selectedCellId && <details {...stylex.props(controlStyles.nestedDisclosure)} open={disclosuresRef.current.motionInheritance} onToggle={(event) => { disclosuresRef.current.motionInheritance = event.currentTarget.open; }}>
+                    <summary {...stylex.props(controlStyles.disclosureSummary)}>Field inheritance</summary>
+                    <div {...stylex.props(controlStyles.disclosureBody)}>
+                      {motionInheritance("animation", "Animation")}
+                      {motionInheritance("animationDuration", "Duration")}
+                      {motionInheritance("animationAmount", "Amount")}
+                      {motionInheritance("animationPhase", "Loop phase")}
+                      {motionInheritance("animationAxis", "Wave axis")}
+                      {motionInheritance("animationStaggerBy", "Stagger by")}
+                      {motionInheritance("animationStagger", "Phase step")}
+                    </div>
+                  </details>}
+                </div>
+              </details>
             </section>
           </>
         )}
@@ -574,20 +649,15 @@ export function Controls({ selected, params, source, onChange, onChangeEnd, onCh
           <>
             <section {...stylex.props(controlStyles.panelSection, controlStyles.sourceSummary)} data-testid="source-summary">
               <div {...stylex.props(controlStyles.sourceIcon)}><Icon name="image" size={18} /></div>
-              <div {...stylex.props(controlStyles.sourceCopy)}><strong {...stylex.props(controlStyles.sourceName)}>{source.name}</strong><span {...stylex.props(controlStyles.sourceDetail)}>{source.width} × {source.height} · {source.usesAlpha ? "alpha" : "luminance"}</span></div>
+              <div {...stylex.props(controlStyles.sourceCopy)}><strong {...stylex.props(controlStyles.sourceName)}>{source.name}</strong><span {...stylex.props(controlStyles.sourceDetail)}>{source.width} × {source.height}, {source.usesAlpha ? "alpha" : "luminance"}</span></div>
               <button {...stylex.props(controlStyles.sourceButton)} type="button" onClick={onChooseSource}>Replace</button>
             </section>
             <section {...stylex.props(controlStyles.panelSection)}>
               <h2 {...stylex.props(controlStyles.overline)}>Source use</h2>
-              <Select id="source-mode" label="Source mode" value={params.sourceMode} describedBy={maskUnavailable ? "source-mode-help source-mask-help" : "source-mode-help"} options={[{ value: "sample", label: "Sample" }, { value: "mask", label: "Mask", disabled: maskUnavailable }, { value: "ignore", label: "Ignore" }]} onChange={(value) => onChange("sourceMode", value)} />
-              <p {...stylex.props(controlStyles.helperCopy)} id="source-mode-help">{params.sourceMode === "sample"
-                ? params.useCells ? "Sample includes a complete cell when its center signal reaches Cell threshold." : "Sample reads source brightness, alpha and color to shape the pattern."
-                : params.sourceMode === "mask"
-                  ? params.useCells ? "Mask uses coverage at each cell center. It selects complete cells and never cuts their shapes." : "Mask clips the pattern to the source outline, not the background."
-                  : params.useCells ? "Ignore fills all complete cell slots without reading the source." : "Ignore draws a full pattern without sampling or clipping the source."}</p>
+              <Select id="source-mode" label="Source mode" value={params.sourceMode} describedBy={maskUnavailable ? "source-mask-help" : undefined} options={[{ value: "sample", label: "Sample" }, { value: "mask", label: "Mask", disabled: maskUnavailable }, { value: "ignore", label: "Ignore" }]} onChange={(value) => onChange("sourceMode", value)} />
               {!supportsMask
-                ? <p {...stylex.props(controlStyles.helperCopy)} id="source-mask-help">Precise masking needs a supported SVG with filled shapes. Raster images can use Sample or Ignore. Enable Use cells to select complete cells from raster coverage.</p>
-                : !params.useCells && params.symmetry !== "none" && <p {...stylex.props(controlStyles.helperCopy)} id="source-mask-help">Set Symmetry to None in Pattern to use Mask.</p>}
+                ? <p {...stylex.props(controlStyles.helperCopy)} id="source-mask-help">Mask requires a filled SVG or Use cells.</p>
+                : !params.useCells && params.symmetry !== "none" && <p {...stylex.props(controlStyles.helperCopy)} id="source-mask-help">Mask requires Symmetry: None.</p>}
             </section>
             {params.sourceMode !== "ignore" && <section {...stylex.props(controlStyles.panelSection, params.sourceMode === "mask" && controlStyles.lastPanelSection)}>
               <h2 {...stylex.props(controlStyles.overline)}>Placement</h2>
@@ -603,7 +673,6 @@ export function Controls({ selected, params, source, onChange, onChangeEnd, onCh
             {params.sourceMode === "sample" && <section {...stylex.props(controlStyles.panelSection, controlStyles.lastPanelSection)}>
               <h2 {...stylex.props(controlStyles.overline)}>Channel</h2>
               <Select id="sample-channel" label="Sample" value={params.sampleChannel} options={[{ value: "auto", label: "Auto" }, { value: "luminance", label: "Luminance" }, { value: "alpha", label: "Alpha" }]} onChange={(value) => onChange("sampleChannel", value)} />
-              <p {...stylex.props(controlStyles.helperCopy)}>Auto uses alpha for transparent artwork and luminance for opaque images.</p>
             </section>}
           </>
         )}
@@ -630,10 +699,7 @@ export function Controls({ selected, params, source, onChange, onChangeEnd, onCh
               </div>
               <Toggle id="transparent-canvas" label="Transparent" checked={params.transparent} spacing="dimensions" onChange={(value) => onChange("transparent", value)} />
             </section>
-            <section {...stylex.props(controlStyles.panelSection, controlStyles.lastPanelSection)}>
-              <h2 {...stylex.props(controlStyles.overline)}>Deterministic Output</h2>
-              <p {...stylex.props(controlStyles.helperCopy)}>Canvas dimensions define the full pattern bounds. Resizing switches Contain to Cover when needed; choose Contain afterward for intentional margins. Viewport size, refresh rate, and pointer position do not change the result.</p>
-            </section>
+
           </>
         )}
       </div>
