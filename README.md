@@ -4,7 +4,7 @@ Taxis is a programmable, deterministic vector-pattern system. The visual editor 
 
 ## Whole cells
 
-Enable **Use cells** to make each sampling slot one complete, editable shape.
+New scenes use a **1500 × 1500** canvas with **Use cells** enabled. Each sampling slot is one complete, editable shape.
 
 - **Cell shape** selects a square, circle, triangle, line, diamond, hexagon, octagon, or regular polygon for every individual cell. It does not cut the whole pattern into that shape.
 - **Cell Size** sets the slot size. **Gap X / Y** increases the distance between these individual slots. **Cell padding** insets the shape inside its slot without moving the centers.
@@ -12,7 +12,7 @@ Enable **Use cells** to make each sampling slot one complete, editable shape.
 - **Cell rotation** fits the rotated shape inside its slot. Motif scale must be at most 1 in this mode. Threshold controls which center samples include a cell.
 - **Repeat pattern** is separate: it copies complete pattern fields. Its repeat gaps and individual-repeat overrides do not control the small-cell spacing.
 
-Dropdowns are in-page, product-styled menus with keyboard selection and dismissal, not operating-system popups.
+The editor uses restrained dark grays with a clear visual hierarchy and self-hosted Inter at a minimum of 14 px. Its compact layout keeps Layers and Properties headers aligned. Dropdowns use in-page menus with keyboard selection and dismissal. Export opens a white dialog.
 
 ## Create and transform
 
@@ -26,10 +26,17 @@ Custom palettes, source color, monochrome, and linear/radial gradients are suppo
 
 ## Motion and export
 
-Choose Pulse, Rotate, or Wave, then press Play. Restoring a scene never autoplays. Phase and elapsed time evaluate deterministically. Hidden tabs suspend playback, and playback does not fill undo or browser history.
+In whole-cell mode, Pulse scales each cell around its own center, Rotate turns each cell locally, and Wave displaces cells along X or Y. Wave defaults to column-based phase staggering, so neighboring columns move at different phases. Stable procedural cell IDs support independent animation overrides through the API; changing visibility does not renumber cells.
 
-PNG and SVG export the displayed frame and pause playback. SVG retains editable shapes, paths, gradients, and groups, not screenshots. Exports are still frames, not animated SVG/video. Project JSON saves the scene and source data. URLs store settings and source identity; custom images must be reopened after reload.
+Open the optional **Timeline** to author keys for all cells or the selected cell. It starts closed unless restored from a link. Click a cell on the canvas or use the focused canvas’s arrow keys to select it; the selection outline is editor-only and never exported. Tracks control local X/Y offsets, scale, rotation, and opacity, with outgoing cubic Bézier easing. Motion evaluates the same keys in the editor, headless API, and exports.
 
+Press Play to preview. Restoring a scene never autoplays. `animationTime` stores elapsed seconds in projects and URLs; it does not collapse independent cell durations into one shared phase. Hidden tabs suspend playback. Pausing or exporting captures the current time without adding an undo step for each preview frame.
+
+The white **Export** dialog offers SVG, PNG, JPEG, WebP, MP4, WebM, and Project JSON. Still images use the paused cursor. With authored whole-cell keyframe tracks, UI video export starts at zero and defaults to the full keyframe duration; otherwise video starts at the captured time. SVG retains editable vectors. PNG and WebP retain transparency; JPEG and video flatten it onto the chosen background. Project JSON saves the scene, source data, and animation settings. URLs store settings and source identity; custom images must be reopened after reload.
+
+Video uses fixed-time native frames encoded with WebCodecs and muxed by Mediabunny, not screen recording or an animated image. It requires HTTPS or localhost and a supported browser encoder. An HTTP Tailnet address is not a secure context. MP4 prefers AVC/H.264 and can use genuine VP9-in-MP4 when AVC is unavailable; older players may not support that fallback. WebM uses VP9 or VP8. The dialog reports unavailable formats and codec notes.
+
+Raster output is limited to **4,194,304 pixels**; the default 1500² canvas fits. SVG can exceed that raster limit within the 4096-per-axis schema, 16,777,216-pixel export limit, and geometry budgets. Video accepts 1–60 FPS, at most 60 seconds, and at most 1,800 whole frames, with a 128 MiB output limit. See [SCENE_API.md](SCENE_API.md) for exact options.
 Kor and Archetypon run through standalone WebAssembly for SVG rendering and PNG encoding. Canvas only presents their RGBA output; there is no parallel Canvas vector renderer. Browser agents and headless Bun can use the same backend. See [SCENE_API.md](SCENE_API.md). There are no legacy scene migrations.
 
 ## Run and verify
