@@ -1,0 +1,53 @@
+{
+  "format": 1,
+  "compiler": {
+    "name": "zig",
+    "version": "0.16.0",
+    "arguments": [
+      "cc",
+      "-target",
+      "wasm32-wasi",
+      "-mexec-model=reactor",
+      "-std=c11",
+      "-Oz",
+      "-g0",
+      "-Wl,-z,stack-size=1048576",
+      "-Wl,--max-memory=536870912",
+      "-Wl,--strip-all"
+    ]
+  },
+  "sources": [
+    {
+      "name": "kor",
+      "repository": "gildrb/kor",
+      "revision": "b076f9c8f805751e4e1906038bff9b560777ef12",
+      "archiveSha256": "49819b2732696631537d02c4f78f2a9ae02cca3224e31bd4e06edc0195ee74db"
+    },
+    {
+      "name": "archetypon",
+      "repository": "gildrb/archetypon",
+      "revision": "6adab2210650f91ba59bcbd36a1e976898f7f03b",
+      "archiveSha256": "ffbdd2830b2049bcb8a0b4276120ca617a40dc86b30a1bc67683990cebd12097"
+    }
+  ],
+  "exports": [
+    "taxis_parse",
+    "taxis_size",
+    "taxis_render_rgba",
+    "taxis_serialize",
+    "taxis_png",
+    "taxis_error",
+    "taxis_free",
+    "malloc",
+    "free"
+  ],
+  "bridge": {
+    "path": "native/bridge.c",
+    "sha256": "977b6e3849e2db0a7a6949f9c09bc0dbc02ce8666f58705511bd23b6e237c8a9"
+  },
+  "artifact": {
+    "path": "public/renderer/kor.wasm",
+    "sha256": "ac9e45a6dcce3a7d1a8fee3ce532a0bdd11f58e652324739172bfefd5695e422",
+    "bytes": 128455
+  }
+}
