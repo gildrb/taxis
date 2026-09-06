@@ -4,9 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "command -v taildev >/dev/null 2>&1 && exec taildev --port 5173 -- bun --hot src/server.ts || exec nix run github:gildrb/taildev/v0.1.0 -- --port 5173 -- bun --hot src/server.ts",
+    "dev": "NODE_ENV=development bun --hot src/server.ts",
     "dev:local": "NODE_ENV=development bun --hot src/server.ts",
-    "dev:tailnet": "NODE_ENV=development bun run scripts/dev-tailnet.ts",
+    "dev:tailnet": "poros bun run dev",
     "build": "bun run scripts/build.ts",
     "build:native": "bun run scripts/build-native.ts",
     "check:native": "bun run scripts/build-native.ts --check",

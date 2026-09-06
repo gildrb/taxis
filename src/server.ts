@@ -6,7 +6,7 @@ import { resolveAssetPath, resolveExistingAssetPath } from "./server-path";
 const production = process.env.NODE_ENV === "production";
 const configuredPort = process.env.PORT?.trim() || undefined;
 const preferredPort = Number(configuredPort ?? 3000);
-const hostname = process.env.TAILDEV_TARGET_HOST?.trim() || process.env.PATTERN_LAB_HOSTNAME?.trim() || "127.0.0.1";
+const hostname = process.env.PATTERN_LAB_HOSTNAME?.trim() || "127.0.0.1";
 const projectRoot = await realpath(".");
 
 if (!Number.isInteger(preferredPort) || preferredPort < 0 || preferredPort > 65_535) {
