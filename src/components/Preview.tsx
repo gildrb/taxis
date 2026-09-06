@@ -3,23 +3,27 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { PatternParams, SourceData } from "../model/types";
 import { previewStyles } from "../styles/Preview.stylex";
 import { drawCanvas } from "../render/canvas";
+import type { SvgRenderer } from "../render/native";
 import { Icon } from "./Icon";
 
 interface PreviewProps {
+  renderer: SvgRenderer;
   params: PatternParams;
   source: SourceData;
   zoom: number;
+  playing: boolean;
+  onFramePhase: (phase: number) => void;
   onFile: (file: File) => void;
   onChooseSource: () => void;
   onError: (message?: string) => void;
 }
 
-export function Preview({ params, source, zoom, onFile, onChooseSource, onError }: PreviewProps) {
+export function Preview({ renderer, params, source, zoom, playing, onFramePhase, onFile, onChooseSource, onError }: PreviewProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const stageRef = useRef<HTMLElement>(null);
   const [frameSize, setFrameSize] = useState<{ height: number; width: number }>();
   const [dragging, setDragging] = useState(false);
-  const [rendered, setRendered] = useState(() => ({ height: params.height, preset: params.preset, width: params.width }));
+  const [rendered, setRendered] = useState(() => ({ height: params.height, preset: params.preset, width: params.width, useCells: params.useCells, cellShape: params.cellShape }));
 
   useLayoutEffect(() => {
     const stage = stageRef.current;
@@ -45,19 +49,48 @@ export function Preview({ params, source, zoom, onFile, onChooseSource, onError 
     };
   }, [rendered.height, rendered.width]);
 
+  const hasFrame = frameSize !== undefined;
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    try {
-      drawCanvas(canvas, { params, source });
-      setRendered((current) => current.width === params.width && current.height === params.height && current.preset === params.preset
-        ? current
-        : { height: params.height, preset: params.preset, width: params.width });
-      onError(undefined);
-    } catch (error) {
-      onError(error instanceof Error ? error.message : "The pattern could not be rendered.");
-    }
-  }, [frameSize, onError, params, source]);
+    let request = 0;
+    let elapsed = 0;
+    let previousTime: number | undefined;
+    let renderedPhase: number | undefined;
+    const render = (phase: number) => {
+      try {
+        drawCanvas(canvas, { params: { ...params, animationPhase: phase }, source }, renderer);
+        canvas.dataset.phase = String(phase);
+        onFramePhase(phase);
+        renderedPhase = phase;
+        return true;
+      } catch (error) {
+        onError(error instanceof Error ? error.message : "The pattern could not be rendered.");
+        return false;
+      }
+    };
+    if (!render(params.animationPhase)) return;
+    setRendered((current) => current.width === params.width && current.height === params.height && current.preset === params.preset && current.useCells === params.useCells && current.cellShape === params.cellShape
+      ? current
+      : { height: params.height, preset: params.preset, width: params.width, useCells: params.useCells, cellShape: params.cellShape });
+    onError(undefined);
+    if (!playing || params.animation === "none") return;
+
+    const tick = (timestamp: number) => {
+      if (previousTime !== undefined && !document.hidden) elapsed += timestamp - previousTime;
+      previousTime = document.hidden ? undefined : timestamp;
+      const phase = Number(((params.animationPhase + elapsed / (params.animationDuration * 1000)) % 1).toFixed(3)) % 1;
+      if (phase !== renderedPhase && !render(phase)) return;
+      request = requestAnimationFrame(tick);
+    };
+    const visibilityChanged = () => { previousTime = undefined; };
+    document.addEventListener("visibilitychange", visibilityChanged);
+    request = requestAnimationFrame(tick);
+    return () => {
+      cancelAnimationFrame(request);
+      document.removeEventListener("visibilitychange", visibilityChanged);
+    };
+  }, [hasFrame, onError, onFramePhase, params, playing, renderer, source]);
 
   const accept = (file?: File) => {
     if (file) onFile(file);
@@ -103,7 +136,8 @@ export function Preview({ params, source, zoom, onFile, onChooseSource, onError 
       )}
       <div {...stylex.props(previewStyles.canvasInfo)} aria-hidden="true">
         <span>{rendered.width} × {rendered.height}</span>
-        <span>{rendered.preset === "candles" ? "Vertical" : rendered.preset === "bars" ? "Horizontal" : "Shape"} raster</span>
+        <span>{rendered.useCells ? `${rendered.cellShape} cells` : { bars: "Horizontal raster", candles: "Vertical raster", shapes: "Shape mosaic", stripes: "Uniform stripes", radial: "Radial rays", rings: "Concentric rings" }[rendered.preset]}</span>
+        {playing && <span>Playing · {params.animation}</span>}
       </div>
       <button {...stylex.props(previewStyles.changeSource)} type="button" aria-label={`Replace source image (${source.name})`} onClick={onChooseSource}>
         <Icon name="image" size={14} /> {source.name}

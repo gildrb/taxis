@@ -8,10 +8,12 @@
     "dev:local": "NODE_ENV=development bun --hot src/server.ts",
     "dev:tailnet": "NODE_ENV=development bun run scripts/dev-tailnet.ts",
     "build": "bun run scripts/build.ts",
+    "build:native": "bun run scripts/build-native.ts",
+    "check:native": "bun run scripts/build-native.ts --check",
     "preview": "NODE_ENV=production bun src/server.ts",
     "test:e2e": "playwright test",
     "typecheck": "tsc --noEmit",
-    "test": "bun test tests/pattern.test.ts tests/server-path.test.ts tests/server-start.test.ts tests/tooling.test.ts",
+    "test": "bun test tests/pattern.test.ts tests/geometry.test.ts tests/whole-cells.test.ts tests/native.test.ts tests/source-mask.test.ts tests/project-expansion.test.ts tests/server-path.test.ts tests/server-start.test.ts tests/tooling.test.ts",
     "check": "bun run typecheck && bun run test && bun run build"
   },
   "dependencies": {

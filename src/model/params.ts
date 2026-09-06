@@ -1,10 +1,19 @@
-import { fingerprintText, legacyFingerprintText } from "./fingerprint";
-import type { PatternParams, SourceData } from "./types";
+import { fingerprintText } from "./fingerprint";
+import { parseVectorMask } from "./svg-mask";
+import type { LayoutCellOverride, PatternParams, SourceData, VectorMask } from "./types";
 
 export const DEFAULT_PARAMS: PatternParams = {
   preset: "bars",
+  useCells: false,
+  cellShape: "square",
+  cellSides: 6,
+  cellGapX: 0,
+  cellGapY: 0,
+  cellPadding: 0,
+  cellRotation: 0,
+  cellThreshold: 0.5,
   cellSize: 48,
-  rowShift: 36,
+  rowShift: 0,
   colorMode: "custom",
   monoColor: "#f5f5f0",
   sourceBackground: 0,
@@ -22,6 +31,48 @@ export const DEFAULT_PARAMS: PatternParams = {
   offsetY: 0,
   width: 720,
   height: 720,
+  rowShiftMode: "alternating",
+  symmetry: "none",
+  motifScale: 1,
+  lineWidth: 0.35,
+  rotation: 0,
+  patternOffsetX: 0,
+  patternOffsetY: 0,
+  patternScaleX: 1,
+  patternScaleY: 1,
+  jitter: 0,
+  seed: 1,
+  radialCount: 24,
+  radialBands: 3,
+  innerRadius: 0.15,
+  radialTwist: 0,
+  radialTaper: 0.5,
+  maskShape: "none",
+  maskSides: 8,
+  maskScale: 1,
+  maskRotation: 0,
+  layoutColumns: 1,
+  layoutRows: 1,
+  layoutGapX: 0,
+  layoutGapY: 0,
+  paddingTop: 0,
+  paddingRight: 0,
+  paddingBottom: 0,
+  paddingLeft: 0,
+  layoutCells: [],
+  gradientType: "linear",
+  gradientStart: "#1d1c1a",
+  gradientEnd: "#d26442",
+  gradientAngle: 0,
+  gradientCenterX: 0,
+  gradientCenterY: 0,
+  gradientSpan: 1,
+  sourceMode: "sample",
+  sourceRotation: 0,
+  animation: "none",
+  animationDuration: 4,
+  animationAmount: 0.2,
+  animationPhase: 0,
 };
 
 export interface PatternRecipe {
@@ -30,19 +81,38 @@ export interface PatternRecipe {
   params: Partial<PatternParams>;
 }
 
+const BALANCED: Partial<PatternParams> = {
+  useCells: false,
+  rowShift: 0,
+  rowShiftMode: "alternating",
+  symmetry: "none",
+  motifScale: 1,
+  rotation: 0,
+  patternOffsetX: 0,
+  patternOffsetY: 0,
+  patternScaleX: 1,
+  patternScaleY: 1,
+  jitter: 0,
+  radialTwist: 0,
+  sourceRotation: 0,
+  offsetX: 0,
+  offsetY: 0,
+  scale: 1,
+  sourceMode: "sample",
+  animation: "none",
+  animationPhase: 0,
+};
+
 export const PRESETS: ReadonlyArray<PatternRecipe> = [
   {
     name: "Sliced Sphere",
-    description: "Large horizontal cells",
+    description: "Centered horizontal cells",
     params: {
+      ...BALANCED,
       preset: "bars",
       fit: "cover",
-      scale: 1,
-      offsetX: 0,
-      offsetY: 0,
       sampleChannel: "auto",
       cellSize: 48,
-      rowShift: 36,
       colorMode: "custom",
       colorCount: 2,
       backgroundColor: "#f7f6f3",
@@ -56,9 +126,9 @@ export const PRESETS: ReadonlyArray<PatternRecipe> = [
     name: "Light Raster",
     description: "Dense vertical luminance field",
     params: {
+      ...BALANCED,
       preset: "candles",
       cellSize: 12,
-      rowShift: 0,
       colorMode: "custom",
       colorCount: 4,
       backgroundColor: "#f7f7f5",
@@ -72,9 +142,9 @@ export const PRESETS: ReadonlyArray<PatternRecipe> = [
     name: "Dark Raster",
     description: "Low-contrast vertical texture",
     params: {
+      ...BALANCED,
       preset: "candles",
       cellSize: 28,
-      rowShift: 0,
       colorMode: "custom",
       colorCount: 4,
       backgroundColor: "#18181b",
@@ -88,9 +158,9 @@ export const PRESETS: ReadonlyArray<PatternRecipe> = [
     name: "Source Mosaic",
     description: "Keep sampled source color",
     params: {
+      ...BALANCED,
       preset: "shapes",
       cellSize: 18,
-      rowShift: 0,
       colorMode: "source",
       sourceBackground: 0.08,
       invert: false,
@@ -98,10 +168,76 @@ export const PRESETS: ReadonlyArray<PatternRecipe> = [
       luminanceBias: 0,
     },
   },
+  {
+    name: "Masked Stripes",
+    description: "Even lines inside an SVG shape",
+    params: {
+      ...BALANCED,
+      preset: "stripes",
+      sourceMode: "mask",
+      fit: "contain",
+      cellSize: 48,
+      lineWidth: 0.35,
+      colorMode: "custom",
+      colorCount: 2,
+      backgroundColor: "#f7f6f3",
+      colors: ["#f7f6f3", "#1d1c1a", "#1d1c1a", "#1d1c1a"],
+      invert: false,
+      contrast: 1,
+      luminanceBias: 0,
+    },
+  },
+  {
+    name: "Radial Rays",
+    description: "Repeated rays in concentric bands",
+    params: {
+      ...BALANCED,
+      preset: "radial",
+      sourceMode: "ignore",
+      radialCount: 24,
+      radialBands: 3,
+      innerRadius: 0.15,
+      radialTwist: 0,
+      radialTaper: 0.5,
+      lineWidth: 0.35,
+      colorMode: "custom",
+      colorCount: 2,
+      backgroundColor: "#f7f6f3",
+      colors: ["#f7f6f3", "#1d1c1a", "#1d1c1a", "#1d1c1a"],
+      invert: false,
+      contrast: 1,
+      luminanceBias: 0,
+    },
+  },
+  {
+    name: "Concentric Rings",
+    description: "Evenly spaced circular lines",
+    params: {
+      ...BALANCED,
+      preset: "rings",
+      sourceMode: "ignore",
+      cellSize: 32,
+      innerRadius: 0.08,
+      lineWidth: 0.35,
+      colorMode: "custom",
+      colorCount: 2,
+      backgroundColor: "#f7f6f3",
+      colors: ["#f7f6f3", "#1d1c1a", "#1d1c1a", "#1d1c1a"],
+      invert: false,
+      contrast: 1,
+      luminanceBias: 0,
+    },
+  },
 ];
 
-const NUMBER_RULES: Record<string, readonly [minimum: number, maximum: number, decimals: number]> = {
+const NUMBER_RULES = {
   cellSize: [4, 160, 0],
+  cellSides: [3, 32, 0],
+  cellGapX: [0, 1024, 0],
+  cellGapY: [0, 1024, 0],
+  cellPadding: [0, 128, 1],
+  cellRotation: [-180, 180, 0],
+  cellThreshold: [0, 1, 2],
   rowShift: [0, 240, 0],
   sourceBackground: [0, 1, 2],
   contrast: [0.1, 4, 2],
@@ -111,14 +247,120 @@ const NUMBER_RULES: Record<string, readonly [minimum: number, maximum: number, d
   offsetY: [-1, 1, 2],
   width: [1, 4096, 0],
   height: [1, 4096, 0],
+  motifScale: [0.1, 2, 2],
+  lineWidth: [0.02, 1, 2],
+  rotation: [-180, 180, 0],
+  patternOffsetX: [-4096, 4096, 0],
+  patternOffsetY: [-4096, 4096, 0],
+  patternScaleX: [0.1, 4, 2],
+  patternScaleY: [0.1, 4, 2],
+  jitter: [0, 1, 2],
+  seed: [0, 99999, 0],
+  radialCount: [3, 128, 0],
+  radialBands: [1, 16, 0],
+  innerRadius: [0, 0.9, 2],
+  radialTwist: [-180, 180, 0],
+  radialTaper: [0, 1, 2],
+  maskSides: [3, 32, 0],
+  maskScale: [0.1, 1, 2],
+  maskRotation: [-180, 180, 0],
+  layoutColumns: [1, 12, 0],
+  layoutRows: [1, 12, 0],
+  layoutGapX: [0, 1024, 0],
+  layoutGapY: [0, 1024, 0],
+  paddingTop: [0, 2048, 0],
+  paddingRight: [0, 2048, 0],
+  paddingBottom: [0, 2048, 0],
+  paddingLeft: [0, 2048, 0],
+  gradientAngle: [-180, 180, 0],
+  gradientCenterX: [-1, 1, 2],
+  gradientCenterY: [-1, 1, 2],
+  gradientSpan: [0.1, 2, 2],
+  sourceRotation: [-180, 180, 0],
+  animationDuration: [0.5, 30, 2],
+  animationAmount: [0, 1, 2],
+  animationPhase: [0, 1, 3],
+} as const satisfies Partial<Record<keyof PatternParams, readonly [number, number, number]>>;
+
+const ENUM_RULES = {
+  cellShape: ["square", "circle", "triangle", "line", "diamond", "hexagon", "octagon", "polygon"],
+  preset: ["bars", "candles", "shapes", "stripes", "radial", "rings"],
+  colorMode: ["custom", "monochrome", "source", "gradient"],
+  fit: ["contain", "cover", "stretch"],
+  sampleChannel: ["auto", "alpha", "luminance"],
+  rowShiftMode: ["alternating", "wave"],
+  symmetry: ["none", "x", "y", "both"],
+  maskShape: ["none", "circle", "triangle", "square", "octagon", "polygon"],
+  gradientType: ["linear", "radial"],
+  sourceMode: ["sample", "mask", "ignore"],
+  animation: ["none", "pulse", "rotate", "wave"],
+} as const satisfies Partial<Record<keyof PatternParams, readonly string[]>>;
+
+
+const CELL_NUMBER_RULES = {
+  index: [0, 143, 0],
+  offsetX: [-4096, 4096, 0],
+  offsetY: [-4096, 4096, 0],
+  scaleX: [0.1, 4, 2],
+  scaleY: [0.1, 4, 2],
+  rotation: [-180, 180, 0],
+  maskRotation: [-180, 180, 0],
+  maskScale: [0.1, 1, 2],
+  padding: [0, 1024, 0],
+} as const;
+const CELL_SCHEMA = {
+  type: "object",
+  required: ["index"],
+  additionalProperties: false,
+  properties: {
+    ...Object.fromEntries(Object.entries(CELL_NUMBER_RULES).map(([key, [minimum, maximum, decimals]]) => [key, {
+      type: decimals === 0 ? "integer" : "number", minimum, maximum, multipleOf: 10 ** -decimals,
+    }])),
+    maskShape: { type: "string", enum: [...ENUM_RULES.maskShape] },
+  },
 };
 
+const PARAMETER_DESCRIPTIONS: Partial<Record<keyof PatternParams, string>> = {
+  useCells: "Select complete individual cell shapes instead of the continuous or atlas pattern generator. Masks select whole cells instead of clipping them.",
+  cellShape: "Shape of each individual cell when useCells is enabled; not a mask over the whole pattern.",
+  cellSize: "Square lattice slot size in pixels. In whole-cell mode, center spacing is cellSize plus cellGapX/Y.",
+  cellSides: "Sides of each polygon cell.",
+  cellGapX: "Horizontal space added between individual cell slots, in pixels; does not resize the cells.",
+  cellGapY: "Vertical space added between individual cell slots, in pixels; does not resize the cells.",
+  cellPadding: "Inset on all sides within each individual cell slot, in pixels; does not change center spacing.",
+  cellRotation: "Rotation of each complete cell shape within its slot, in degrees.",
+  cellThreshold: "Minimum center sample for including a complete cell. Never clips part of a cell.",
+  maskShape: "Optional whole-pattern boundary, distinct from cellShape. Whole-cell mode uses center selection rather than clipping.",
+  layoutColumns: "Number of full pattern repeats across the canvas; not the number of small cells.",
+  layoutRows: "Number of full pattern repeats down the canvas; not the number of small cells.",
+  layoutGapX: "Horizontal gap between full pattern repeats, in pixels. Use cellGapX for individual shapes.",
+  layoutGapY: "Vertical gap between full pattern repeats, in pixels. Use cellGapY for individual shapes.",
+  layoutCells: "Sparse overrides for full pattern repeats, not individual small shapes.",
+};
+
+export const PARAMETER_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  properties: Object.fromEntries(Object.entries(DEFAULT_PARAMS).map(([key, defaultValue]) => {
+    const range = (NUMBER_RULES as Record<string, readonly [number, number, number]>)[key];
+    const choices = (ENUM_RULES as Record<string, readonly string[]>)[key];
+    const shape = range
+      ? { type: range[2] === 0 ? "integer" : "number", minimum: range[0], maximum: range[1], multipleOf: 10 ** -range[2] }
+      : choices ? { type: "string", enum: [...choices] }
+        : key === "colorCount" ? { type: "integer", enum: [2, 3, 4] }
+          : key === "layoutCells" ? { type: "array", maxItems: 144, items: CELL_SCHEMA }
+            : typeof defaultValue === "boolean" ? { type: "boolean" }
+          : Array.isArray(defaultValue) ? { type: "array", minItems: 4, maxItems: 4, items: { type: "string", pattern: "^#[0-9a-fA-F]{6}$" } }
+            : { type: "string", pattern: "^#[0-9a-fA-F]{6}$" };
+    const description = PARAMETER_DESCRIPTIONS[key as keyof PatternParams];
+    return [key, { ...shape, default: structuredClone(defaultValue), ...(description ? { description } : {}) }];
+  })),
+} as const;
+
+const vectorFingerprints = new WeakMap<VectorMask, string>();
+
 export function applyPreset(params: PatternParams, partial: Partial<PatternParams>): PatternParams {
-  return {
-    ...params,
-    ...partial,
-    colors: partial.colors ? [...partial.colors] : [...params.colors],
-  };
+  return structuredClone({ ...params, ...partial });
 }
 
 export function parsePreset(value: unknown): PatternParams {
@@ -131,9 +373,11 @@ export function parsePreset(value: unknown): PatternParams {
     throw new Error("Project parameters must be an object.");
   }
   const raw = rawValue as Record<string, unknown>;
-  const next: PatternParams = { ...DEFAULT_PARAMS, colors: [...DEFAULT_PARAMS.colors] };
+  const next = structuredClone(DEFAULT_PARAMS);
+  for (const key of Object.keys(raw)) {
+    if (!Object.hasOwn(DEFAULT_PARAMS, key)) throw new Error(`Unknown pattern parameter “${key}”.`);
+  }
   const target = next as unknown as Record<string, unknown>;
-
   for (const [key, [minimum, maximum, decimals]] of Object.entries(NUMBER_RULES)) {
     const field = raw[key];
     if (field === undefined) continue;
@@ -142,32 +386,14 @@ export function parsePreset(value: unknown): PatternParams {
     }
     target[key] = decimals === 0 ? Math.round(field) : Number(field.toFixed(decimals));
   }
-
-  if (raw.preset !== undefined) {
-    if (raw.preset !== "bars" && raw.preset !== "candles" && raw.preset !== "shapes") {
-      throw new Error("Pattern preset is invalid.");
+  for (const [key, allowed] of Object.entries(ENUM_RULES)) {
+    if (raw[key] === undefined) continue;
+    if (typeof raw[key] !== "string" || !(allowed as readonly string[]).includes(raw[key])) {
+      throw new Error(`Project field “${key}” is invalid.`);
     }
-    next.preset = raw.preset;
+    target[key] = raw[key];
   }
-  if (raw.colorMode !== undefined) {
-    if (raw.colorMode !== "custom" && raw.colorMode !== "monochrome" && raw.colorMode !== "source") {
-      throw new Error("Color mode is invalid.");
-    }
-    next.colorMode = raw.colorMode;
-  }
-  if (raw.fit !== undefined) {
-    if (raw.fit !== "contain" && raw.fit !== "cover" && raw.fit !== "stretch") {
-      throw new Error("Source fit is invalid.");
-    }
-    next.fit = raw.fit;
-  }
-  if (raw.sampleChannel !== undefined) {
-    if (raw.sampleChannel !== "auto" && raw.sampleChannel !== "alpha" && raw.sampleChannel !== "luminance") {
-      throw new Error("Sample channel is invalid.");
-    }
-    next.sampleChannel = raw.sampleChannel;
-  }
-  for (const key of ["invert", "transparent"] as const) {
+  for (const key of ["useCells", "invert", "transparent"] as const) {
     if (raw[key] !== undefined) {
       if (typeof raw[key] !== "boolean") throw new Error(`Project field “${key}” must be true or false.`);
       next[key] = raw[key];
@@ -179,22 +405,43 @@ export function parsePreset(value: unknown): PatternParams {
     }
     next.colorCount = raw.colorCount;
   }
-  for (const key of ["monoColor", "backgroundColor"] as const) {
+  for (const key of ["monoColor", "backgroundColor", "gradientStart", "gradientEnd"] as const) {
     if (raw[key] !== undefined) {
       if (!isHex(raw[key])) throw new Error(`Project field “${key}” must be a six-digit hex color.`);
       next[key] = raw[key].toLowerCase();
     }
   }
   if (raw.colors !== undefined) {
-    if (!Array.isArray(raw.colors) || raw.colors.length !== 4 || raw.colors.some((color) => !isHex(color))) {
+    if (!Array.isArray(raw.colors) || raw.colors.length !== 4 || Array.from(raw.colors).some((color) => !isHex(color))) {
       throw new Error("Project colors must contain four six-digit hex colors.");
     }
-    next.colors = [
-      (raw.colors[0] as string).toLowerCase(),
-      (raw.colors[1] as string).toLowerCase(),
-      (raw.colors[2] as string).toLowerCase(),
-      (raw.colors[3] as string).toLowerCase(),
-    ];
+    next.colors = raw.colors.map((color) => (color as string).toLowerCase()) as PatternParams["colors"];
+  }
+  if (raw.layoutCells !== undefined) {
+    if (!Array.isArray(raw.layoutCells) || raw.layoutCells.length > 144) throw new Error("Layout cells must be an array of at most 144 overrides.");
+    const indices = new Set<number>();
+    next.layoutCells = Array.from(raw.layoutCells, (entry): LayoutCellOverride => {
+      if (!entry || typeof entry !== "object" || Array.isArray(entry)) throw new Error("Each layout cell must be an object.");
+      const cell = entry as Record<string, unknown>;
+      if (typeof cell.index !== "number" || !Number.isInteger(cell.index)) throw new Error("Each layout cell needs an integer index.");
+      const result: LayoutCellOverride = { index: cell.index };
+      for (const key of Object.keys(cell)) {
+        if (key !== "maskShape" && !Object.hasOwn(CELL_NUMBER_RULES, key)) throw new Error(`Unknown layout cell parameter “${key}”.`);
+      }
+      for (const [key, [min, max, decimals]] of Object.entries(CELL_NUMBER_RULES)) {
+        const value = cell[key];
+        if (value === undefined) continue;
+        if (typeof value !== "number" || !Number.isFinite(value) || value < min || value > max) throw new Error(`Layout cell field “${key}” is outside its supported range.`);
+        (result as unknown as Record<string, unknown>)[key] = Number(value.toFixed(decimals));
+      }
+      if (cell.maskShape !== undefined) {
+        if (typeof cell.maskShape !== "string" || !(ENUM_RULES.maskShape as readonly string[]).includes(cell.maskShape)) throw new Error("Layout cell mask shape is invalid.");
+        result.maskShape = cell.maskShape as PatternParams["maskShape"];
+      }
+      if (indices.has(result.index)) throw new Error("Layout cell indices must be unique.");
+      indices.add(result.index);
+      return result;
+    }).sort((first, second) => first.index - second.index);
   }
   return next;
 }
@@ -209,56 +456,24 @@ export function outputSizeForSource(source: SourceData): Pick<PatternParams, "wi
 }
 
 export function canonicalizePatternParams(params: PatternParams): PatternParams {
-  return {
-    ...params,
-    cellSize: Math.round(params.cellSize),
-    rowShift: Math.round(params.rowShift),
-    sourceBackground: Number(params.sourceBackground.toFixed(2)),
-    contrast: Number(params.contrast.toFixed(2)),
-    luminanceBias: Number(params.luminanceBias.toFixed(2)),
-    scale: Number(params.scale.toFixed(2)),
-    offsetX: Number(params.offsetX.toFixed(2)),
-    offsetY: Number(params.offsetY.toFixed(2)),
-    width: Math.round(params.width),
-    height: Math.round(params.height),
-    monoColor: params.monoColor.toLowerCase(),
-    backgroundColor: params.backgroundColor.toLowerCase(),
-    colors: params.colors.map((color) => color.toLowerCase()) as PatternParams["colors"],
-  };
+  return parsePreset(params);
 }
 
 export function projectFingerprint(params: PatternParams, source: SourceData): string {
   const canonical = canonicalizePatternParams(params);
+  let vectorFingerprint = source.vectorMask ? vectorFingerprints.get(source.vectorMask) : undefined;
+  if (source.vectorMask && !vectorFingerprint) {
+    vectorFingerprint = fingerprintText(JSON.stringify(parseVectorMask(source.vectorMask)));
+    vectorFingerprints.set(source.vectorMask, vectorFingerprint);
+  }
   return fingerprintText(JSON.stringify([
-    canonical.preset,
-    canonical.cellSize,
-    canonical.rowShift,
-    canonical.colorMode,
-    canonical.monoColor,
-    canonical.sourceBackground,
-    canonical.invert,
-    canonical.contrast,
-    canonical.luminanceBias,
-    canonical.colorCount,
-    canonical.backgroundColor,
-    ...canonical.colors,
-    canonical.transparent,
-    canonical.fit,
-    canonical.sampleChannel,
-    canonical.scale,
-    canonical.offsetX,
-    canonical.offsetY,
-    canonical.width,
-    canonical.height,
+    canonical,
     source.width,
     source.height,
     source.usesAlpha,
     source.fingerprint,
+    vectorFingerprint ?? null,
   ]));
-}
-
-export function legacyProjectFingerprint(params: PatternParams, sourceFingerprint: string): string {
-  return legacyFingerprintText(`${JSON.stringify(params)}:${sourceFingerprint}`);
 }
 
 function isHex(value: unknown): value is string {

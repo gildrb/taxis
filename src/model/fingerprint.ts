@@ -17,24 +17,6 @@ export function fingerprintText(value: string): string {
   return fingerprintBytes(new TextEncoder().encode(value));
 }
 
-export function legacyFingerprintPixels(width: number, height: number, pixels: Uint8ClampedArray): string {
-  let hash = 2_166_136_261;
-  hash = Math.imul(hash ^ width, 16_777_619);
-  hash = Math.imul(hash ^ height, 16_777_619);
-  for (let index = 0; index < pixels.length; index++) {
-    hash = Math.imul(hash ^ (pixels[index] ?? 0), 16_777_619);
-  }
-  return toHex(hash);
-}
-
-export function legacyFingerprintText(value: string): string {
-  let hash = 2_166_136_261;
-  for (let index = 0; index < value.length; index++) {
-    hash = Math.imul(hash ^ value.charCodeAt(index), 16_777_619);
-  }
-  return toHex(hash);
-}
-
 function toHex(value: number): string {
   return (value >>> 0).toString(16).padStart(8, "0");
 }

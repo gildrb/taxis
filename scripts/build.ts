@@ -99,6 +99,9 @@ function isErrorCode(error: unknown, code: string): boolean {
   return typeof error === "object" && error !== null && "code" in error && error.code === code;
 }
 
+const nativeCheck = Bun.spawn([process.execPath, resolve(root, "scripts/build-native.ts"), "--check"], { cwd: root, stdout: "inherit", stderr: "inherit" });
+if (await nativeCheck.exited !== 0) throw new Error("The pinned Kor/Archetypon renderer failed verification.");
+
 await acquireBuildLock();
 let releaseCreated = false;
 let published = false;

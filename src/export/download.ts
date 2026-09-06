@@ -10,9 +10,3 @@ export function downloadBlob(blob: Blob, name: string): void {
 export function downloadText(text: string, name: string, type: string): void {
   downloadBlob(new Blob([text], { type }), name);
 }
-
-export function canvasToBlob(canvas: HTMLCanvasElement, type = "image/png"): Promise<Blob> {
-  return new Promise((resolve, reject) => {
-    canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error("Canvas export failed."))), type);
-  });
-}

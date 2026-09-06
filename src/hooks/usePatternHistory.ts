@@ -25,7 +25,7 @@ function appendHistory(past: SceneState[], scene: SceneState): SceneState[] {
     const candidate = candidates[index]!;
     const isNewSource = !sources.has(candidate.source);
     const nextBytes = isNewSource
-      ? candidate.source.pixels.byteLength + (candidate.source.dataUrl?.length ?? 0) * 2
+      ? candidate.source.pixels.byteLength + (candidate.source.dataUrl?.length ?? 0) * 2 + (candidate.source.vectorMask ? JSON.stringify(candidate.source.vectorMask).length * 2 : 0)
       : 0;
     if (kept.length > 0 && sourceBytes + nextBytes > HISTORY_SOURCE_BUDGET) break;
     if (isNewSource) {
@@ -38,7 +38,7 @@ function appendHistory(past: SceneState[], scene: SceneState): SceneState[] {
 }
 
 function copyParams(params: PatternParams): PatternParams {
-  return { ...params, colors: [...params.colors] };
+  return structuredClone(params);
 }
 
 function copyScene(scene: SceneState): SceneState {
@@ -54,6 +54,7 @@ function sourcesEqual(first: SourceData, second: SourceData): boolean {
     && first.usesAlpha === second.usesAlpha
     && first.kind === second.kind
     && Boolean(first.dataUrl) === Boolean(second.dataUrl)
+    && JSON.stringify(first.vectorMask) === JSON.stringify(second.vectorMask)
   );
 }
 
@@ -63,7 +64,7 @@ function rebaseTransaction(start: SceneState, before: SceneState, after: SceneSt
     const oldValue = before.params[key];
     const newValue = after.params[key];
     if (JSON.stringify(oldValue) !== JSON.stringify(newValue)) {
-      (params as unknown as Record<string, unknown>)[key] = Array.isArray(newValue) ? [...newValue] : newValue;
+      (params as unknown as Record<string, unknown>)[key] = structuredClone(newValue);
     }
   }
   return { params, source: after.source };

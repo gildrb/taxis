@@ -1,37 +1,19 @@
-import { generatePattern } from "../model/pattern";
-import type { PatternFrame, RenderInput } from "../model/types";
+import type { RenderInput } from "../model/types";
+import type { SvgRenderer } from "./native";
+import { renderScene } from "./scene";
 
+/** Canvas presents native RGBA pixels; all vector rendering is Kor/Archetypon. */
 export function drawCanvas(
   canvas: HTMLCanvasElement | OffscreenCanvas,
   input: RenderInput,
-): PatternFrame {
-  const frame = generatePattern(input);
-  if (canvas.width !== frame.width || canvas.height !== frame.height) {
-    canvas.width = frame.width;
-    canvas.height = frame.height;
-  }
+  renderer: SvgRenderer,
+): void {
   const context = canvas.getContext("2d") as CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D | null;
   if (!context) throw new Error("2D canvas is unavailable.");
-  drawPatternFrame(context, frame);
-  return frame;
-}
-
-export function drawPatternFrame(
-  context: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D,
-  frame: PatternFrame,
-): void {
-  context.clearRect(0, 0, frame.width, frame.height);
-  context.imageSmoothingEnabled = false;
-  if (frame.background) {
-    context.globalAlpha = 1;
-    context.fillStyle = frame.background;
-    context.fillRect(0, 0, frame.width, frame.height);
-  }
-  for (const primitive of frame.primitives) {
-    if (primitive.opacity <= 0) continue;
-    context.globalAlpha = primitive.opacity;
-    context.fillStyle = primitive.color;
-    context.fillRect(primitive.x, primitive.y, primitive.width, primitive.height);
-  }
-  context.globalAlpha = 1;
+  const raster = renderScene(input, renderer, "rgba");
+  const image = new ImageData(raster.pixels, raster.width, raster.height);
+  // Keep the last successful frame intact if native parsing or rendering fails.
+  if (canvas.width !== raster.width) canvas.width = raster.width;
+  if (canvas.height !== raster.height) canvas.height = raster.height;
+  context.putImageData(image, 0, 0);
 }

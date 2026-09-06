@@ -1,13 +1,42 @@
 import * as stylex from "@stylexjs/stylex";
-import { useEffect, useLayoutEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { PRESETS, type PatternRecipe } from "../model/params";
-import type { PatternParams, SourceData } from "../model/types";
+import type { LayoutCellOverride, PatternParams, SourceData } from "../model/types";
 import { controlStyles } from "../styles/Controls.stylex";
 import { sharedStyles } from "../styles/shared.stylex";
 import { Icon } from "./Icon";
+import { Select } from "./Select";
 
 export type PanelSelection = "pattern" | "source" | "canvas";
 const PANEL_SELECTIONS: readonly PanelSelection[] = ["pattern", "source", "canvas"];
+const PATTERN_PRESETS = [
+  { value: "bars", label: "Horizontal" },
+  { value: "candles", label: "Vertical" },
+  { value: "shapes", label: "Shapes" },
+  { value: "stripes", label: "Stripes" },
+  { value: "radial", label: "Radial" },
+  { value: "rings", label: "Rings" },
+] as const;
+
+const CELL_SHAPES = [
+  { value: "square", label: "Square" },
+  { value: "circle", label: "Circle" },
+  { value: "triangle", label: "Triangle" },
+  { value: "line", label: "Line" },
+  { value: "diamond", label: "Diamond" },
+  { value: "hexagon", label: "Hexagon" },
+  { value: "octagon", label: "Octagon" },
+  { value: "polygon", label: "Polygon" },
+] as const;
+
+const MASK_SHAPES = [
+  { value: "none", label: "None" },
+  { value: "circle", label: "Circle" },
+  { value: "triangle", label: "Triangle" },
+  { value: "square", label: "Square" },
+  { value: "octagon", label: "Octagon" },
+  { value: "polygon", label: "Polygon" },
+] as const;
 
 interface ControlsProps {
   selected: PanelSelection;
@@ -20,6 +49,9 @@ interface ControlsProps {
   onSelect: (selected: PanelSelection) => void;
   onPreset: (recipe: PatternRecipe) => void;
   onChooseSource: () => void;
+  playing?: boolean;
+  onTogglePlayback?: () => void;
+  onResetPlayback?: () => void;
 }
 
 interface RangeProps {
@@ -33,6 +65,15 @@ interface RangeProps {
   unit?: string;
   stacked?: boolean;
   onChange: (value: number) => void;
+  onChangeEnd: () => void;
+  onChangeStart: () => void;
+}
+
+interface ColorProps {
+  label: string;
+  name: string;
+  value: string;
+  onChange: (value: string) => void;
   onChangeEnd: () => void;
   onChangeStart: () => void;
 }
@@ -53,7 +94,7 @@ interface NumericInputProps {
 }
 
 function formatNumber(value: number, step: number): string {
-  const decimals = step < 0.1 ? 2 : step < 1 ? 1 : 0;
+  const decimals = Math.max(0, -Math.floor(Math.log10(step)));
   return Number(value.toFixed(decimals)).toString();
 }
 
@@ -161,6 +202,23 @@ function RangeControl({ id, label, error, value, min, max, step, unit, stacked =
   );
 }
 
+function ColorControl({ label, name, value, onChange, onChangeEnd, onChangeStart }: ColorProps) {
+  return (
+    <label {...stylex.props(controlStyles.colorRow)}>
+      <span>{label}</span>
+      <input
+        {...stylex.props(controlStyles.colorInput)}
+        name={name}
+        type="color"
+        value={value}
+        onBlur={onChangeEnd}
+        onFocus={onChangeStart}
+        onChange={(event) => onChange(event.currentTarget.value)}
+      />
+    </label>
+  );
+}
+
 function Toggle({ id, label, checked, spacing, onChange }: { id: string; label: string; checked: boolean; spacing?: "property" | "dimensions"; onChange: (checked: boolean) => void }) {
   return (
     <label {...stylex.props(
@@ -192,13 +250,33 @@ function PanelHeader({ selected }: { selected: PanelSelection }) {
   );
 }
 
-export function Controls({ selected, params, source, onChange, onChangeEnd, onChangeStart, renderError, onSelect, onPreset, onChooseSource }: ControlsProps) {
+export function Controls({ selected, params, source, onChange, onChangeEnd, onChangeStart, renderError, onSelect, onPreset, onChooseSource, playing = false, onTogglePlayback, onResetPlayback }: ControlsProps) {
+  const atlasPattern = params.preset === "bars" || params.preset === "candles" || params.preset === "shapes";
+  const supportsMask = params.useCells || source.kind === "radial" || Boolean(source.vectorMask);
+  const preciseSourceMask = params.sourceMode === "mask" && !params.useCells;
+  const maskUnavailable = !supportsMask || !params.useCells && params.symmetry !== "none";
+  const [selectedRepeat, setSelectedRepeat] = useState(0);
+  const repeatCount = params.layoutColumns * params.layoutRows;
+  const selectedRepeatIndex = Math.min(selectedRepeat, repeatCount - 1);
+  const repeatOverride = params.layoutCells.find((cell) => cell.index === selectedRepeatIndex);
+  const repeatClipShape = repeatOverride?.maskShape ?? params.maskShape;
+  const hasRepeatClip = params.layoutCells.some((cell) => cell.index < repeatCount && cell.maskShape !== undefined && cell.maskShape !== "none");
+  const hasPolygonClip = params.maskShape === "polygon" || params.layoutCells.some((cell) => cell.index < repeatCount && cell.maskShape === "polygon");
+  const disclosuresRef = useRef({ asymmetry: false, radial: false, gradient: false, repeatSpacing: false, individualRepeat: false, clip: false, repeat: false });
   const propertiesScrollRef = useRef<HTMLDivElement>(null);
   const scrollPositionsRef = useRef<Record<PanelSelection, number>>({ pattern: 0, source: 0, canvas: 0 });
 
   useLayoutEffect(() => {
     if (propertiesScrollRef.current) propertiesScrollRef.current.scrollTop = scrollPositionsRef.current[selected];
   }, [selected]);
+
+  const changeRepeat = <Key extends Exclude<keyof LayoutCellOverride, "index">>(key: Key, value: LayoutCellOverride[Key]) => {
+    const nextRepeat: LayoutCellOverride = { ...repeatOverride, index: selectedRepeatIndex, [key]: value };
+    if (value === undefined) delete nextRepeat[key];
+    const repeats = params.layoutCells.filter((cell) => cell.index !== selectedRepeatIndex);
+    if (Object.keys(nextRepeat).length > 1) repeats.push(nextRepeat);
+    onChange("layoutCells", repeats.sort((first, second) => first.index - second.index));
+  };
 
   return (
     <aside {...stylex.props(sharedStyles.glassPanel, controlStyles.propertiesPanel)} id="properties-panel" tabIndex={-1} aria-label="Properties">
@@ -236,6 +314,12 @@ export function Controls({ selected, params, source, onChange, onChangeEnd, onCh
         {renderError && <p {...stylex.props(controlStyles.renderError)} id="pattern-render-error" role="alert">{renderError}</p>}
         {selected === "pattern" && (
           <>
+            <section {...stylex.props(controlStyles.panelSection, controlStyles.modeSection)}>
+              <label {...stylex.props(controlStyles.toggleRow)} htmlFor="use-cells">
+                <span {...stylex.props(controlStyles.fieldLabel)}>Use cells</span>
+                <input {...stylex.props(controlStyles.checkboxInput)} id="use-cells" name="use-cells" type="checkbox" checked={params.useCells} onChange={(event) => onChange("useCells", event.currentTarget.checked)} />
+              </label>
+            </section>
             <section {...stylex.props(controlStyles.panelSection)}>
               <h2 {...stylex.props(controlStyles.overline)}>Recipes</h2>
               <div {...stylex.props(controlStyles.recipeGrid)} data-recipe-grid>
@@ -247,7 +331,11 @@ export function Controls({ selected, params, source, onChange, onChangeEnd, onCh
                         ? controlStyles.candlesPreview
                         : preset.params.preset === "shapes"
                           ? controlStyles.shapesPreview
-                          : controlStyles.barsPreview,
+                          : preset.params.preset === "radial"
+                            ? controlStyles.radialPreview
+                            : preset.params.preset === "rings"
+                              ? controlStyles.ringsPreview
+                              : controlStyles.barsPreview,
                     )} style={{ backgroundColor: preset.params.backgroundColor }} aria-hidden="true" />
                     <strong {...stylex.props(controlStyles.recipeName)}>{preset.name}</strong>
                     <small {...stylex.props(controlStyles.recipeDetail)}>{preset.description}</small>
@@ -258,46 +346,226 @@ export function Controls({ selected, params, source, onChange, onChangeEnd, onCh
 
             <section {...stylex.props(controlStyles.panelSection)}>
               <h2 {...stylex.props(controlStyles.overline)}>Pattern</h2>
-              <div {...stylex.props(controlStyles.segmented)} role="group" aria-label="Pattern preset">
-                {(["bars", "candles", "shapes"] as const).map((preset) => (
-                  <button {...stylex.props(controlStyles.segmentedButton, params.preset === preset && controlStyles.activeSegmentedButton)} key={preset} type="button" aria-pressed={params.preset === preset} onClick={() => onChange("preset", preset)}>
-                    {preset === "bars" ? "Horizontal" : preset === "candles" ? "Vertical" : "Shapes"}
-                  </button>
-                ))}
-              </div>
-              <RangeControl onChangeEnd={onChangeEnd} onChangeStart={onChangeStart} id="cell-size" label="Cell Size" error={renderError} value={params.cellSize} min={4} max={160} step={1} unit="px" onChange={(value) => onChange("cellSize", value)} />
-              {params.preset === "bars" && <RangeControl onChangeEnd={onChangeEnd} onChangeStart={onChangeStart} stacked id="row-shift" label="Row Shift" value={params.rowShift} min={0} max={240} step={1} unit="px" onChange={(value) => onChange("rowShift", value)} />}
+              {params.useCells
+                ? <Select id="cell-shape" label="Cell shape" value={params.cellShape} options={CELL_SHAPES} onChange={(value) => onChange("cellShape", value)} />
+                : <div {...stylex.props(controlStyles.segmented)} role="group" aria-label="Pattern preset">
+                  {PATTERN_PRESETS.map(({ value, label }) => (
+                    <button {...stylex.props(controlStyles.segmentedButton, params.preset === value && controlStyles.activeSegmentedButton)} key={value} type="button" aria-pressed={params.preset === value} onClick={() => onChange("preset", value)}>
+                      {label}
+                    </button>
+                  ))}
+                </div>}
+              {(params.useCells || params.preset !== "radial") && <RangeControl onChangeEnd={onChangeEnd} onChangeStart={onChangeStart} id="cell-size" label="Cell Size" error={renderError} value={params.cellSize} min={4} max={160} step={1} unit="px" onChange={(value) => onChange("cellSize", value)} />}
+              {params.useCells ? <>
+                <RangeControl onChangeEnd={onChangeEnd} onChangeStart={onChangeStart} stacked id="motif-scale" label="Motif scale" value={params.motifScale} min={0.1} max={1} step={0.01} onChange={(value) => onChange("motifScale", value)} />
+                {params.cellShape === "line" && <RangeControl onChangeEnd={onChangeEnd} onChangeStart={onChangeStart} stacked id="line-width" label="Line width" value={params.lineWidth} min={0.02} max={1} step={0.01} onChange={(value) => onChange("lineWidth", value)} />}
+                {params.cellShape === "polygon" && <RangeControl onChangeEnd={onChangeEnd} onChangeStart={onChangeStart} stacked id="cell-sides" label="Cell sides" value={params.cellSides} min={3} max={32} step={1} onChange={(value) => onChange("cellSides", value)} />}
+                {params.cellShape !== "circle" && <RangeControl onChangeEnd={onChangeEnd} onChangeStart={onChangeStart} stacked id="cell-rotation" label="Cell rotation" value={params.cellRotation} min={-180} max={180} step={1} unit="°" onChange={(value) => onChange("cellRotation", value)} />}
+                {params.sourceMode !== "ignore" && <RangeControl onChangeEnd={onChangeEnd} onChangeStart={onChangeStart} stacked id="cell-threshold" label="Cell threshold" value={params.cellThreshold} min={0} max={1} step={0.01} onChange={(value) => onChange("cellThreshold", value)} />}
+                <p {...stylex.props(controlStyles.helperCopy)}>Each slot contains one complete shape. Cell shape changes each small cell, not the outline of the pattern.</p>
+              </> : <>
+                {atlasPattern
+                  ? <RangeControl onChangeEnd={onChangeEnd} onChangeStart={onChangeStart} stacked id="motif-scale" label="Motif scale" value={params.motifScale} min={0.1} max={2} step={0.01} onChange={(value) => onChange("motifScale", value)} />
+                  : <RangeControl onChangeEnd={onChangeEnd} onChangeStart={onChangeStart} stacked={params.preset !== "radial"} id="line-width" label="Line width" value={params.lineWidth} min={0.02} max={1} step={0.01} onChange={(value) => onChange("lineWidth", value)} />}
+                {params.preset === "radial" && (
+                  <>
+                    <RangeControl onChangeEnd={onChangeEnd} onChangeStart={onChangeStart} stacked id="radial-count" label="Repeat count" value={params.radialCount} min={3} max={128} step={1} onChange={(value) => onChange("radialCount", value)} />
+                    <RangeControl onChangeEnd={onChangeEnd} onChangeStart={onChangeStart} stacked id="radial-bands" label="Bands" value={params.radialBands} min={1} max={16} step={1} onChange={(value) => onChange("radialBands", value)} />
+                    <details {...stylex.props(controlStyles.nestedDisclosure)} open={disclosuresRef.current.radial} onToggle={(event) => { disclosuresRef.current.radial = event.currentTarget.open; }}>
+                      <summary {...stylex.props(controlStyles.disclosureSummary)}>Radial shape</summary>
+                      <div {...stylex.props(controlStyles.disclosureBody)}>
+                        <RangeControl onChangeEnd={onChangeEnd} onChangeStart={onChangeStart} id="inner-radius" label="Inner radius" value={params.innerRadius} min={0} max={0.9} step={0.01} onChange={(value) => onChange("innerRadius", value)} />
+                        <RangeControl onChangeEnd={onChangeEnd} onChangeStart={onChangeStart} stacked id="radial-taper" label="Taper" value={params.radialTaper} min={0} max={1} step={0.01} onChange={(value) => onChange("radialTaper", value)} />
+                      </div>
+                    </details>
+                  </>
+                )}
+                {params.preset === "rings" && <RangeControl onChangeEnd={onChangeEnd} onChangeStart={onChangeStart} stacked id="inner-radius" label="Inner radius" value={params.innerRadius} min={0} max={0.9} step={0.01} onChange={(value) => onChange("innerRadius", value)} />}
+              </>}
+              {(!params.useCells || params.sourceMode !== "ignore") && <Select id="symmetry" label="Symmetry" value={params.symmetry} describedBy={preciseSourceMask ? "symmetry-help" : undefined} options={[{ value: "none", label: "None" }, { value: "x", label: "X (left/right)", disabled: preciseSourceMask }, { value: "y", label: "Y (top/bottom)", disabled: preciseSourceMask }, { value: "both", label: "Both", disabled: preciseSourceMask }]} onChange={(value) => onChange("symmetry", value)} />}
+              {preciseSourceMask && <p {...stylex.props(controlStyles.helperCopy)} id="symmetry-help">Mask preserves the vector outline. Use Sample mode or Use cells for symmetry.</p>}
             </section>
 
+            {params.useCells && <section {...stylex.props(controlStyles.panelSection)}>
+              <h2 {...stylex.props(controlStyles.overline)}>Spacing &amp; padding</h2>
+              <RangeControl onChangeEnd={onChangeEnd} onChangeStart={onChangeStart} id="cell-gap-x" label="Gap X" value={params.cellGapX} min={0} max={1024} step={1} unit="px" onChange={(value) => onChange("cellGapX", value)} />
+              <RangeControl onChangeEnd={onChangeEnd} onChangeStart={onChangeStart} stacked id="cell-gap-y" label="Gap Y" value={params.cellGapY} min={0} max={1024} step={1} unit="px" onChange={(value) => onChange("cellGapY", value)} />
+              <RangeControl onChangeEnd={onChangeEnd} onChangeStart={onChangeStart} stacked id="cell-padding" label="Cell padding" value={params.cellPadding} min={0} max={Math.min(128, params.cellSize / 2)} step={0.1} unit="px" onChange={(value) => onChange("cellPadding", value)} />
+              <p {...stylex.props(controlStyles.helperCopy)}>Gaps add space between cell slots. Padding shrinks each shape without moving its center.</p>
+            </section>}
+
             <section {...stylex.props(controlStyles.panelSection)}>
+              <h2 {...stylex.props(controlStyles.overline)}>Transform</h2>
+              <RangeControl onChangeEnd={onChangeEnd} onChangeStart={onChangeStart} id="pattern-offset-x" label="Position X" value={params.patternOffsetX} min={-4096} max={4096} step={1} unit="px" onChange={(value) => onChange("patternOffsetX", value)} />
+              <RangeControl onChangeEnd={onChangeEnd} onChangeStart={onChangeStart} stacked id="pattern-offset-y" label="Position Y" value={params.patternOffsetY} min={-4096} max={4096} step={1} unit="px" onChange={(value) => onChange("patternOffsetY", value)} />
+              <RangeControl onChangeEnd={onChangeEnd} onChangeStart={onChangeStart} stacked id="pattern-scale-x" label="Scale X" value={params.patternScaleX} min={0.1} max={4} step={0.01} onChange={(value) => onChange("patternScaleX", value)} />
+              <RangeControl onChangeEnd={onChangeEnd} onChangeStart={onChangeStart} stacked id="pattern-scale-y" label="Scale Y" value={params.patternScaleY} min={0.1} max={4} step={0.01} onChange={(value) => onChange("patternScaleY", value)} />
+              <RangeControl onChangeEnd={onChangeEnd} onChangeStart={onChangeStart} stacked id="geometry-rotation" label="Rotation" value={params.rotation} min={-180} max={180} step={1} unit="°" onChange={(value) => onChange("rotation", value)} />
+              <p {...stylex.props(controlStyles.helperCopy)}>Scale and rotation use the pattern center. Cell Size changes internal detail.</p>
+            </section>
+
+            <details {...stylex.props(controlStyles.panelSection, controlStyles.disclosureSection)} open={disclosuresRef.current.clip} onToggle={(event) => { disclosuresRef.current.clip = event.currentTarget.open; }}>
+              <summary {...stylex.props(controlStyles.disclosureSummary)}>Pattern clip</summary>
+              <div {...stylex.props(controlStyles.disclosureBody)}>
+                <Select id="mask-shape" label="Pattern clip" value={params.maskShape} options={MASK_SHAPES} onChange={(value) => onChange("maskShape", value)} />
+                {hasPolygonClip && <RangeControl onChangeEnd={onChangeEnd} onChangeStart={onChangeStart} stacked id="mask-sides" label="Clip sides" value={params.maskSides} min={3} max={32} step={1} onChange={(value) => onChange("maskSides", value)} />}
+                {(params.maskShape !== "none" || hasRepeatClip) && <>
+                  <RangeControl onChangeEnd={onChangeEnd} onChangeStart={onChangeStart} stacked id="mask-scale" label="Clip scale" value={params.maskScale} min={0.1} max={1} step={0.01} onChange={(value) => onChange("maskScale", value)} />
+                  <RangeControl onChangeEnd={onChangeEnd} onChangeStart={onChangeStart} stacked id="mask-rotation" label="Clip rotation" value={params.maskRotation} min={-180} max={180} step={1} unit="°" onChange={(value) => onChange("maskRotation", value)} />
+                </>}
+                <p {...stylex.props(controlStyles.helperCopy)}>{params.useCells ? "Selects complete cells by their centers. This boundary does not change the shape of each cell." : "Clips the whole pattern, not the individual shapes inside it. The background stays unchanged."}</p>
+              </div>
+            </details>
+
+            <details {...stylex.props(controlStyles.panelSection, controlStyles.disclosureSection)} open={disclosuresRef.current.repeat} onToggle={(event) => { disclosuresRef.current.repeat = event.currentTarget.open; }}>
+              <summary {...stylex.props(controlStyles.disclosureSummary)}>Repeat pattern</summary>
+              <div {...stylex.props(controlStyles.disclosureBody)}>
+                <div {...stylex.props(controlStyles.dimensionGrid)}>
+                  <label {...stylex.props(controlStyles.dimensionLabel)} htmlFor="repeat-columns">
+                    <span {...stylex.props(controlStyles.fieldLabel)}>Repeat columns</span>
+                    <span {...stylex.props(controlStyles.dimensionInput)}><NumericInput ariaLabel="Repeat columns" dimension id="repeat-columns" integer max={12} min={1} name="repeat-columns" onChange={(value) => onChange("layoutColumns", value)} step={1} value={params.layoutColumns} /></span>
+                  </label>
+                  <label {...stylex.props(controlStyles.dimensionLabel)} htmlFor="repeat-rows">
+                    <span {...stylex.props(controlStyles.fieldLabel)}>Repeat rows</span>
+                    <span {...stylex.props(controlStyles.dimensionInput)}><NumericInput ariaLabel="Repeat rows" dimension id="repeat-rows" integer max={12} min={1} name="repeat-rows" onChange={(value) => onChange("layoutRows", value)} step={1} value={params.layoutRows} /></span>
+                  </label>
+                </div>
+                <p {...stylex.props(controlStyles.helperCopy)}>These controls copy the whole pattern. They do not change the spacing between small cells.</p>
+                <details {...stylex.props(controlStyles.nestedDisclosure)} open={disclosuresRef.current.repeatSpacing} onToggle={(event) => { disclosuresRef.current.repeatSpacing = event.currentTarget.open; }}>
+                  <summary {...stylex.props(controlStyles.disclosureSummary)}>Repeat spacing &amp; outer padding</summary>
+                  <div {...stylex.props(controlStyles.disclosureBody)}>
+                    <RangeControl onChangeEnd={onChangeEnd} onChangeStart={onChangeStart} id="repeat-gap-x" label="Repeat gap X" value={params.layoutGapX} min={0} max={1024} step={1} unit="px" onChange={(value) => onChange("layoutGapX", value)} />
+                    <RangeControl onChangeEnd={onChangeEnd} onChangeStart={onChangeStart} stacked id="repeat-gap-y" label="Repeat gap Y" value={params.layoutGapY} min={0} max={1024} step={1} unit="px" onChange={(value) => onChange("layoutGapY", value)} />
+                    <RangeControl onChangeEnd={onChangeEnd} onChangeStart={onChangeStart} stacked id="padding-top" label="Canvas padding top" value={params.paddingTop} min={0} max={2048} step={1} unit="px" onChange={(value) => onChange("paddingTop", value)} />
+                    <RangeControl onChangeEnd={onChangeEnd} onChangeStart={onChangeStart} stacked id="padding-right" label="Canvas padding right" value={params.paddingRight} min={0} max={2048} step={1} unit="px" onChange={(value) => onChange("paddingRight", value)} />
+                    <RangeControl onChangeEnd={onChangeEnd} onChangeStart={onChangeStart} stacked id="padding-bottom" label="Canvas padding bottom" value={params.paddingBottom} min={0} max={2048} step={1} unit="px" onChange={(value) => onChange("paddingBottom", value)} />
+                    <RangeControl onChangeEnd={onChangeEnd} onChangeStart={onChangeStart} stacked id="padding-left" label="Canvas padding left" value={params.paddingLeft} min={0} max={2048} step={1} unit="px" onChange={(value) => onChange("paddingLeft", value)} />
+                  </div>
+                </details>
+                {(repeatCount > 1 || repeatOverride) && <details {...stylex.props(controlStyles.nestedDisclosure)} open={disclosuresRef.current.individualRepeat} onToggle={(event) => { disclosuresRef.current.individualRepeat = event.currentTarget.open; }}>
+                  <summary {...stylex.props(controlStyles.disclosureSummary)}>Individual repeat</summary>
+                  <div {...stylex.props(controlStyles.disclosureBody)}>
+                    {repeatCount > 1 && <Select
+                      id="repeat-selector"
+                      label="Repeat selector"
+                      stacked
+                      value={selectedRepeatIndex}
+                      options={Array.from({ length: repeatCount }, (_, index) => ({ value: index, label: `${index + 1} · Row ${Math.floor(index / params.layoutColumns) + 1}, column ${index % params.layoutColumns + 1}` }))}
+                      onChange={setSelectedRepeat}
+                    />}
+                    <div key={selectedRepeatIndex}>
+                      <div {...stylex.props(controlStyles.sectionActions)}><button {...stylex.props(controlStyles.sourceButton, controlStyles.actionButton)} type="button" disabled={!repeatOverride} onClick={() => onChange("layoutCells", params.layoutCells.filter((cell) => cell.index !== selectedRepeatIndex))}>Reset selected repeat</button></div>
+                      <div {...stylex.props(controlStyles.dimensionGrid, controlStyles.stackedPropertyRow)}>
+                        <label {...stylex.props(controlStyles.dimensionLabel)} htmlFor="repeat-offset-x">
+                          <span {...stylex.props(controlStyles.fieldLabel)}>Repeat position X</span>
+                          <span {...stylex.props(controlStyles.dimensionInput)}><NumericInput ariaLabel="Repeat position X" dimension id="repeat-offset-x" integer max={4096} min={-4096} name="repeat-offset-x" onChange={(value) => changeRepeat("offsetX", value)} step={1} value={repeatOverride?.offsetX ?? 0} /><small {...stylex.props(controlStyles.dimensionUnit)}>px</small></span>
+                        </label>
+                        <label {...stylex.props(controlStyles.dimensionLabel)} htmlFor="repeat-offset-y">
+                          <span {...stylex.props(controlStyles.fieldLabel)}>Repeat position Y</span>
+                          <span {...stylex.props(controlStyles.dimensionInput)}><NumericInput ariaLabel="Repeat position Y" dimension id="repeat-offset-y" integer max={4096} min={-4096} name="repeat-offset-y" onChange={(value) => changeRepeat("offsetY", value)} step={1} value={repeatOverride?.offsetY ?? 0} /><small {...stylex.props(controlStyles.dimensionUnit)}>px</small></span>
+                        </label>
+                        <label {...stylex.props(controlStyles.dimensionLabel)} htmlFor="repeat-scale-x">
+                          <span {...stylex.props(controlStyles.fieldLabel)}>Repeat scale X</span>
+                          <span {...stylex.props(controlStyles.dimensionInput)}><NumericInput ariaLabel="Repeat scale X" dimension id="repeat-scale-x" max={4} min={0.1} name="repeat-scale-x" onChange={(value) => changeRepeat("scaleX", value)} step={0.01} value={repeatOverride?.scaleX ?? 1} /></span>
+                        </label>
+                        <label {...stylex.props(controlStyles.dimensionLabel)} htmlFor="repeat-scale-y">
+                          <span {...stylex.props(controlStyles.fieldLabel)}>Repeat scale Y</span>
+                          <span {...stylex.props(controlStyles.dimensionInput)}><NumericInput ariaLabel="Repeat scale Y" dimension id="repeat-scale-y" max={4} min={0.1} name="repeat-scale-y" onChange={(value) => changeRepeat("scaleY", value)} step={0.01} value={repeatOverride?.scaleY ?? 1} /></span>
+                        </label>
+                      </div>
+                      <RangeControl onChangeEnd={onChangeEnd} onChangeStart={onChangeStart} stacked id="repeat-rotation" label="Repeat rotation" value={repeatOverride?.rotation ?? 0} min={-180} max={180} step={1} unit="°" onChange={(value) => changeRepeat("rotation", value)} />
+                      <Select id="repeat-clip-shape" label="Repeat clip" value={repeatOverride?.maskShape ?? "inherit"} options={[{ value: "inherit", label: "Use pattern clip" }, ...MASK_SHAPES]} onChange={(value) => changeRepeat("maskShape", value === "inherit" ? undefined : value)} />
+                      {repeatClipShape !== "none" && <>
+                        <RangeControl onChangeEnd={onChangeEnd} onChangeStart={onChangeStart} stacked id="repeat-clip-scale" label="Repeat clip scale" value={repeatOverride?.maskScale ?? params.maskScale} min={0.1} max={1} step={0.01} onChange={(value) => changeRepeat("maskScale", value)} />
+                        <RangeControl onChangeEnd={onChangeEnd} onChangeStart={onChangeStart} stacked id="repeat-clip-rotation" label="Repeat clip rotation" value={repeatOverride?.maskRotation ?? params.maskRotation} min={-180} max={180} step={1} unit="°" onChange={(value) => changeRepeat("maskRotation", value)} />
+                      </>}
+                      {repeatClipShape === "polygon" && <p {...stylex.props(controlStyles.helperCopy)}>Clip sides is shared across repeats. Set it in Pattern clip.</p>}
+                      <RangeControl onChangeEnd={onChangeEnd} onChangeStart={onChangeStart} stacked id="repeat-padding" label="Repeat padding" value={repeatOverride?.padding ?? 0} min={0} max={1024} step={1} unit="px" onChange={(value) => changeRepeat("padding", value)} />
+                      <p {...stylex.props(controlStyles.helperCopy)}>Repeat edits apply before the global Transform. Unedited clip settings follow Pattern clip; repeat padding adds an inner inset.</p>
+                    </div>
+                  </div>
+                </details>}
+                {params.layoutCells.some((cell) => cell.index >= repeatCount) && <p {...stylex.props(controlStyles.helperCopy)}>Repeats outside this layout keep their saved edits.</p>}
+              </div>
+            </details>
+
+            <details {...stylex.props(controlStyles.panelSection, controlStyles.disclosureSection)} open={disclosuresRef.current.asymmetry} onToggle={(event) => { disclosuresRef.current.asymmetry = event.currentTarget.open; }}>
+              <summary {...stylex.props(controlStyles.disclosureSummary)}>Asymmetry</summary>
+              <div {...stylex.props(controlStyles.disclosureBody)}>
+                {(params.useCells || atlasPattern) && (
+                  <>
+                    <RangeControl onChangeEnd={onChangeEnd} onChangeStart={onChangeStart} id="row-shift" label="Row Shift" value={params.rowShift} min={0} max={240} step={1} unit="px" onChange={(value) => onChange("rowShift", value)} />
+                    <Select id="row-shift-mode" label="Row shift mode" value={params.rowShiftMode} options={[{ value: "alternating", label: "Alternating" }, { value: "wave", label: "Wave" }]} onChange={(value) => onChange("rowShiftMode", value)} />
+                  </>
+                )}
+                {!params.useCells && params.preset === "radial" && <RangeControl onChangeEnd={onChangeEnd} onChangeStart={onChangeStart} id="radial-twist" label="Twist per band" value={params.radialTwist} min={-180} max={180} step={1} unit="°" onChange={(value) => onChange("radialTwist", value)} />}
+                <RangeControl onChangeEnd={onChangeEnd} onChangeStart={onChangeStart} stacked={params.useCells || atlasPattern || params.preset === "radial"} id="jitter" label="Jitter" value={params.jitter} min={0} max={1} step={0.01} onChange={(value) => onChange("jitter", value)} />
+                <div {...stylex.props(controlStyles.selectControl)}>
+                  <label {...stylex.props(controlStyles.fieldLabel)} htmlFor="jitter-seed">Jitter seed</label>
+                  <span {...stylex.props(controlStyles.numberField)}><NumericInput ariaLabel="Jitter seed" id="jitter-seed" integer max={99999} min={0} name="jitter-seed" onChange={(value) => onChange("seed", value)} step={1} value={params.seed} /></span>
+                </div>
+                <p {...stylex.props(controlStyles.helperCopy)}>Zero row shift, twist and jitter preserve the base geometry. The same jitter seed gives the same result.</p>
+              </div>
+            </details>
+
+            {params.sourceMode === "sample" && <section {...stylex.props(controlStyles.panelSection)}>
               <h2 {...stylex.props(controlStyles.overline)}>Sampling</h2>
               <RangeControl onChangeEnd={onChangeEnd} onChangeStart={onChangeStart} id="contrast" label="Contrast" value={params.contrast} min={0.1} max={4} step={0.01} onChange={(value) => onChange("contrast", value)} />
               <RangeControl onChangeEnd={onChangeEnd} onChangeStart={onChangeStart} stacked id="luminance-bias" label="Luminance Bias" value={params.luminanceBias} min={-1} max={1} step={0.01} onChange={(value) => onChange("luminanceBias", value)} />
               <Toggle id="invert" label="Invert" checked={params.invert} spacing="property" onChange={(value) => onChange("invert", value)} />
+            </section>}
+
+            <section {...stylex.props(controlStyles.panelSection)}>
+              <h2 {...stylex.props(controlStyles.overline)}>Color</h2>
+              <Select id="color-mode" label="Mode" value={params.colorMode} options={[{ value: "custom", label: "Custom" }, { value: "monochrome", label: "Monochrome" }, { value: "source", label: "Source" }, { value: "gradient", label: "Gradient" }]} onChange={(value) => onChange("colorMode", value)} />
+              {params.colorMode === "custom" && (
+                <div {...stylex.props(controlStyles.segmented, controlStyles.compactSegmented)} role="group" aria-label="Color count">
+                  {([2, 3, 4] as const).map((count) => <button {...stylex.props(controlStyles.segmentedButton, params.colorCount === count && controlStyles.activeSegmentedButton)} key={count} type="button" aria-pressed={params.colorCount === count} onClick={() => onChange("colorCount", count)}>{count} colors</button>)}
+                </div>
+              )}
+              {params.colorMode === "gradient" && <Select id="gradient-type" label="Gradient type" value={params.gradientType} options={[{ value: "linear", label: "Linear" }, { value: "radial", label: "Radial" }]} onChange={(value) => onChange("gradientType", value)} />}
+              {(params.colorMode === "custom" || params.colorMode === "gradient") && (
+                <div {...stylex.props(controlStyles.colorList)}>
+                  <ColorControl label="Background" name="background-color" value={params.backgroundColor} onChangeEnd={onChangeEnd} onChangeStart={onChangeStart} onChange={(value) => onChange("backgroundColor", value)} />
+                  {params.colorMode === "custom" && params.colors.slice(0, params.colorCount).map((color, index) => (
+                    <ColorControl key={index} label={index === 0 ? "Shadows" : index === params.colorCount - 1 ? "Highlights" : `Midtone ${index}`} name={`palette-${index}`} value={color} onChangeEnd={onChangeEnd} onChangeStart={onChangeStart} onChange={(value) => {
+                      const colors: PatternParams["colors"] = [...params.colors];
+                      colors[index] = value;
+                      onChange("colors", colors);
+                    }} />
+                  ))}
+                  {params.colorMode === "gradient" && <>
+                    <ColorControl label="Start color" name="gradient-start" value={params.gradientStart} onChangeEnd={onChangeEnd} onChangeStart={onChangeStart} onChange={(value) => onChange("gradientStart", value)} />
+                    <ColorControl label="End color" name="gradient-end" value={params.gradientEnd} onChangeEnd={onChangeEnd} onChangeStart={onChangeStart} onChange={(value) => onChange("gradientEnd", value)} />
+                  </>}
+                </div>
+              )}
+              {params.colorMode === "gradient" && <details {...stylex.props(controlStyles.nestedDisclosure)} open={disclosuresRef.current.gradient} onToggle={(event) => { disclosuresRef.current.gradient = event.currentTarget.open; }}>
+                <summary {...stylex.props(controlStyles.disclosureSummary)}>Gradient placement</summary>
+                <div {...stylex.props(controlStyles.disclosureBody)}>
+                  {params.gradientType === "linear" && <RangeControl onChangeEnd={onChangeEnd} onChangeStart={onChangeStart} id="gradient-angle" label="Gradient angle" value={params.gradientAngle} min={-180} max={180} step={1} unit="°" onChange={(value) => onChange("gradientAngle", value)} />}
+                  <RangeControl onChangeEnd={onChangeEnd} onChangeStart={onChangeStart} stacked={params.gradientType === "linear"} id="gradient-center-x" label="Gradient center X" value={params.gradientCenterX} min={-1} max={1} step={0.01} onChange={(value) => onChange("gradientCenterX", value)} />
+                  <RangeControl onChangeEnd={onChangeEnd} onChangeStart={onChangeStart} stacked id="gradient-center-y" label="Gradient center Y" value={params.gradientCenterY} min={-1} max={1} step={0.01} onChange={(value) => onChange("gradientCenterY", value)} />
+                  <RangeControl onChangeEnd={onChangeEnd} onChangeStart={onChangeStart} stacked id="gradient-span" label="Gradient span" value={params.gradientSpan} min={0.1} max={2} step={0.01} onChange={(value) => onChange("gradientSpan", value)} />
+                </div>
+              </details>}
+              {params.colorMode === "monochrome" && <div {...stylex.props(controlStyles.colorList)}><ColorControl label="Tint" name="mono-color" value={params.monoColor} onChangeEnd={onChangeEnd} onChangeStart={onChangeStart} onChange={(value) => onChange("monoColor", value)} /></div>}
+              {params.colorMode === "source" && !params.useCells && <RangeControl onChangeEnd={onChangeEnd} onChangeStart={onChangeStart} id="source-background" label="Background" value={params.sourceBackground} min={0} max={1} step={0.01} onChange={(value) => onChange("sourceBackground", value)} />}
             </section>
 
             <section {...stylex.props(controlStyles.panelSection, controlStyles.lastPanelSection)}>
-              <h2 {...stylex.props(controlStyles.overline)}>Color</h2>
-              <label {...stylex.props(controlStyles.selectControl)} htmlFor="color-mode"><span {...stylex.props(controlStyles.fieldLabel)}>Mode</span><select {...stylex.props(controlStyles.select)} id="color-mode" name="color-mode" value={params.colorMode} onChange={(event) => onChange("colorMode", event.currentTarget.value as PatternParams["colorMode"])}><option value="custom">Custom</option><option value="monochrome">Monochrome</option><option value="source">Source</option></select></label>
-              {params.colorMode === "custom" && (
-                <>
-                  <div {...stylex.props(controlStyles.segmented, controlStyles.compactSegmented)} role="group" aria-label="Color count">
-                    {([2, 3, 4] as const).map((count) => <button {...stylex.props(controlStyles.segmentedButton, params.colorCount === count && controlStyles.activeSegmentedButton)} key={count} type="button" aria-pressed={params.colorCount === count} onClick={() => onChange("colorCount", count)}>{count} colors</button>)}
-                  </div>
-                  <div {...stylex.props(controlStyles.colorList)}>
-                    <label {...stylex.props(controlStyles.colorRow)}><span>Background</span><input {...stylex.props(controlStyles.colorInput)} name="background-color" type="color" value={params.backgroundColor} onBlur={onChangeEnd} onFocus={onChangeStart} onChange={(event) => onChange("backgroundColor", event.currentTarget.value)} /></label>
-                    {params.colors.slice(0, params.colorCount).map((color, index) => (
-                      <label {...stylex.props(controlStyles.colorRow)} key={index}><span>{index === 0 ? "Shadows" : index === params.colorCount - 1 ? "Highlights" : `Midtone ${index}`}</span><input {...stylex.props(controlStyles.colorInput)} name={`palette-${index}`} type="color" value={color} onBlur={onChangeEnd} onFocus={onChangeStart} onChange={(event) => {
-                        const colors: PatternParams["colors"] = [...params.colors];
-                        colors[index] = event.currentTarget.value;
-                        onChange("colors", colors);
-                      }} /></label>
-                    ))}
-                  </div>
-                </>
-              )}
-              {params.colorMode === "monochrome" && <div {...stylex.props(controlStyles.colorList)}><label {...stylex.props(controlStyles.colorRow)}><span>Tint</span><input {...stylex.props(controlStyles.colorInput)} name="mono-color" type="color" value={params.monoColor} onBlur={onChangeEnd} onFocus={onChangeStart} onChange={(event) => onChange("monoColor", event.currentTarget.value)} /></label></div>}
-              {params.colorMode === "source" && <RangeControl onChangeEnd={onChangeEnd} onChangeStart={onChangeStart} id="source-background" label="Background" value={params.sourceBackground} min={0} max={1} step={0.01} onChange={(value) => onChange("sourceBackground", value)} />}
+              <h2 {...stylex.props(controlStyles.overline)}>Motion</h2>
+              <Select id="animation" label="Animation" value={params.animation} options={[{ value: "none", label: "None" }, { value: "pulse", label: "Pulse" }, { value: "rotate", label: "Rotate" }, { value: "wave", label: "Wave" }]} onChange={(value) => onChange("animation", value)} />
+              {params.animation !== "none" && <>
+                <RangeControl onChangeEnd={onChangeEnd} onChangeStart={onChangeStart} stacked id="animation-duration" label="Duration" value={params.animationDuration} min={0.5} max={30} step={0.01} unit="s" onChange={(value) => onChange("animationDuration", value)} />
+                {params.animation !== "rotate" && <RangeControl onChangeEnd={onChangeEnd} onChangeStart={onChangeStart} stacked id="animation-amount" label="Amount" value={params.animationAmount} min={0} max={1} step={0.01} onChange={(value) => onChange("animationAmount", value)} />}
+                <RangeControl onChangeEnd={onChangeEnd} onChangeStart={onChangeStart} stacked id="animation-phase" label="Loop phase" value={params.animationPhase} min={0} max={1} step={0.001} onChange={(value) => onChange("animationPhase", value)} />
+                <div {...stylex.props(controlStyles.sectionActions)}>
+                  <button {...stylex.props(controlStyles.sourceButton, controlStyles.actionButton)} type="button" disabled={!onTogglePlayback} onClick={onTogglePlayback}>{playing ? "Pause" : "Play"}</button>
+                  <button {...stylex.props(controlStyles.sourceButton, controlStyles.actionButton)} type="button" disabled={!onResetPlayback} onClick={onResetPlayback}>Reset phase</button>
+                </div>
+              </>}
+              <p {...stylex.props(controlStyles.helperCopy)}>Playback starts only with Play. PNG and SVG export the current phase. Project files save motion settings.</p>
             </section>
           </>
         )}
@@ -310,6 +578,18 @@ export function Controls({ selected, params, source, onChange, onChangeEnd, onCh
               <button {...stylex.props(controlStyles.sourceButton)} type="button" onClick={onChooseSource}>Replace</button>
             </section>
             <section {...stylex.props(controlStyles.panelSection)}>
+              <h2 {...stylex.props(controlStyles.overline)}>Source use</h2>
+              <Select id="source-mode" label="Source mode" value={params.sourceMode} describedBy={maskUnavailable ? "source-mode-help source-mask-help" : "source-mode-help"} options={[{ value: "sample", label: "Sample" }, { value: "mask", label: "Mask", disabled: maskUnavailable }, { value: "ignore", label: "Ignore" }]} onChange={(value) => onChange("sourceMode", value)} />
+              <p {...stylex.props(controlStyles.helperCopy)} id="source-mode-help">{params.sourceMode === "sample"
+                ? params.useCells ? "Sample includes a complete cell when its center signal reaches Cell threshold." : "Sample reads source brightness, alpha and color to shape the pattern."
+                : params.sourceMode === "mask"
+                  ? params.useCells ? "Mask uses coverage at each cell center. It selects complete cells and never cuts their shapes." : "Mask clips the pattern to the source outline, not the background."
+                  : params.useCells ? "Ignore fills all complete cell slots without reading the source." : "Ignore draws a full pattern without sampling or clipping the source."}</p>
+              {!supportsMask
+                ? <p {...stylex.props(controlStyles.helperCopy)} id="source-mask-help">Precise masking needs a supported SVG with filled shapes. Raster images can use Sample or Ignore. Enable Use cells to select complete cells from raster coverage.</p>
+                : !params.useCells && params.symmetry !== "none" && <p {...stylex.props(controlStyles.helperCopy)} id="source-mask-help">Set Symmetry to None in Pattern to use Mask.</p>}
+            </section>
+            {params.sourceMode !== "ignore" && <section {...stylex.props(controlStyles.panelSection, params.sourceMode === "mask" && controlStyles.lastPanelSection)}>
               <h2 {...stylex.props(controlStyles.overline)}>Placement</h2>
               <div {...stylex.props(controlStyles.segmented)} role="group" aria-label="Source fit">
                 {(["contain", "cover", "stretch"] as const).map((fit) => <button {...stylex.props(controlStyles.segmentedButton, params.fit === fit && controlStyles.activeSegmentedButton)} key={fit} type="button" aria-pressed={params.fit === fit} onClick={() => onChange("fit", fit)}>{fit}</button>)}
@@ -317,12 +597,14 @@ export function Controls({ selected, params, source, onChange, onChangeEnd, onCh
               <RangeControl onChangeEnd={onChangeEnd} onChangeStart={onChangeStart} id="source-scale" label="Scale" value={params.scale} min={0.1} max={4} step={0.01} onChange={(value) => onChange("scale", value)} />
               <RangeControl onChangeEnd={onChangeEnd} onChangeStart={onChangeStart} stacked id="source-x" label="Offset X" value={params.offsetX} min={-1} max={1} step={0.01} onChange={(value) => onChange("offsetX", value)} />
               <RangeControl onChangeEnd={onChangeEnd} onChangeStart={onChangeStart} stacked id="source-y" label="Offset Y" value={params.offsetY} min={-1} max={1} step={0.01} onChange={(value) => onChange("offsetY", value)} />
-            </section>
-            <section {...stylex.props(controlStyles.panelSection, controlStyles.lastPanelSection)}>
+              <RangeControl onChangeEnd={onChangeEnd} onChangeStart={onChangeStart} stacked id="source-rotation" label="Source rotation" value={params.sourceRotation} min={-180} max={180} step={1} unit="°" onChange={(value) => onChange("sourceRotation", value)} />
+              <div {...stylex.props(controlStyles.sectionActions)}><button {...stylex.props(controlStyles.sourceButton, controlStyles.actionButton)} type="button" onClick={() => onPreset({ name: "Center source", description: "", params: { offsetX: 0, offsetY: 0, sourceRotation: 0, scale: 1 } })}>Center source</button></div>
+            </section>}
+            {params.sourceMode === "sample" && <section {...stylex.props(controlStyles.panelSection, controlStyles.lastPanelSection)}>
               <h2 {...stylex.props(controlStyles.overline)}>Channel</h2>
-              <label {...stylex.props(controlStyles.selectControl)} htmlFor="sample-channel"><span {...stylex.props(controlStyles.fieldLabel)}>Sample</span><select {...stylex.props(controlStyles.select)} id="sample-channel" name="sample-channel" value={params.sampleChannel} onChange={(event) => onChange("sampleChannel", event.currentTarget.value as PatternParams["sampleChannel"])}><option value="auto">Auto</option><option value="luminance">Luminance</option><option value="alpha">Alpha</option></select></label>
+              <Select id="sample-channel" label="Sample" value={params.sampleChannel} options={[{ value: "auto", label: "Auto" }, { value: "luminance", label: "Luminance" }, { value: "alpha", label: "Alpha" }]} onChange={(value) => onChange("sampleChannel", value)} />
               <p {...stylex.props(controlStyles.helperCopy)}>Auto uses alpha for transparent artwork and luminance for opaque images.</p>
-            </section>
+            </section>}
           </>
         )}
 

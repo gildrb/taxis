@@ -95,3 +95,21 @@ describe("development server ports", () => {
     expect(`${stdout}\n${stderr}`).toContain("EADDRINUSE");
   });
 });
+
+
+test("serves development WASM as an asset, not the HTML fallback", async () => {
+  const child = spawnServer({ ...process.env, NODE_ENV: undefined, PORT: "0" });
+  const url = await waitForServerUrl(child);
+  const asset = new URL("/public/renderer/kor.wasm", url);
+  const response = await fetch(asset);
+  expect(response.status).toBe(200);
+  expect(response.headers.get("Content-Type")).toContain("application/wasm");
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  expect([...bytes.subarray(0, 4)]).toEqual([0, 97, 115, 109]);
+  const head = await fetch(asset, { method: "HEAD" });
+  expect(head.status).toBe(200);
+  expect(Number(head.headers.get("Content-Length"))).toBe(bytes.length);
+  expect((await fetch(new URL("/public/missing.wasm", url))).status).toBe(404);
+  expect((await fetch(new URL("/public/%2e%2e%2fpackage.json", url))).status).toBe(404);
+  expect((await fetch(asset, { method: "POST" })).status).toBe(405);
+});

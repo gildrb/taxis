@@ -152,6 +152,49 @@ export const controlStyles = stylex.create({
   lastPanelSection: {
     borderBottomWidth: 0,
   },
+  disclosureSection: {
+    paddingTop: 0,
+    paddingBottom: 0,
+  },
+  nestedDisclosure: {
+    marginTop: 12,
+    borderTopColor: colors.line,
+    borderTopStyle: "solid",
+    borderTopWidth: 1,
+  },
+  disclosureSummary: {
+    minHeight: 44,
+    paddingTop: 15,
+    paddingBottom: 15,
+    color: {
+      default: colors.textMuted,
+      ":hover": colors.text,
+    },
+    fontSize: 10,
+    fontWeight: 500,
+    cursor: "pointer",
+    outline: {
+      default: "none",
+      ":focus-visible": "1px solid #ffffff",
+    },
+    outlineOffset: 2,
+  },
+  disclosureBody: {
+    paddingTop: 5,
+    paddingBottom: 15,
+  },
+  sectionActions: {
+    display: "flex",
+    gap: 8,
+    marginTop: 12,
+  },
+  actionButton: {
+    flexGrow: 1,
+    minHeight: {
+      default: 32,
+      "@media (max-width: 900px)": 44,
+    },
+  },
   overline: {
     marginTop: 0,
     marginRight: 0,
@@ -165,20 +208,20 @@ export const controlStyles = stylex.create({
   },
   recipeGrid: {
     display: "grid",
-    gridTemplateColumns: {
-      default: "1fr 1fr",
-      "@media (min-width: 521px) and (max-width: 900px)": "repeat(4, minmax(100px, 1fr))",
-      "@media (max-width: 520px)": "repeat(4, 112px)",
-    },
-    gap: 7,
-    overflowX: {
-      default: "visible",
+    gridAutoFlow: "column",
+    gridTemplateRows: {
+      default: "repeat(2, auto)",
       "@media (max-width: 900px)": "auto",
     },
-    scrollbarWidth: {
-      default: "auto",
-      "@media (max-width: 900px)": "none",
+    gridAutoColumns: {
+      default: "calc((100% - 7px) / 2)",
+      "@media (min-width: 521px) and (max-width: 900px)": "minmax(112px, 1fr)",
+      "@media (max-width: 520px)": "112px",
     },
+    gap: 7,
+    overflowX: "auto",
+    overscrollBehaviorX: "contain",
+    scrollbarWidth: "none",
   },
   recipeButton: {
     minWidth: 0,
@@ -246,6 +289,14 @@ export const controlStyles = stylex.create({
   },
   shapesPreview: {
     backgroundImage: "radial-gradient(circle, rgba(235, 235, 235, 0.8) 0 2px, transparent 2.5px)",
+  },
+  radialPreview: {
+    backgroundImage: "repeating-conic-gradient(rgba(20, 20, 20, 0.9) 0deg 5deg, transparent 5deg 15deg)",
+    backgroundSize: "100% 100%",
+  },
+  ringsPreview: {
+    backgroundImage: "repeating-radial-gradient(circle, transparent 0 5px, rgba(20, 20, 20, 0.9) 5px 8px, transparent 8px 10px)",
+    backgroundSize: "100% 100%",
   },
   segmented: {
     display: "grid",
@@ -373,6 +424,16 @@ export const controlStyles = stylex.create({
     backgroundColor: "transparent",
     cursor: "ew-resize",
   },
+  modeSection: {
+    paddingTop: 4,
+    paddingBottom: 4,
+  },
+  checkboxInput: {
+    width: 16,
+    height: 16,
+    margin: 0,
+    accentColor: "#c7c7cb",
+  },
   toggleRow: {
     minHeight: 44,
     display: "flex",
@@ -432,36 +493,6 @@ export const controlStyles = stylex.create({
     alignItems: "center",
     justifyContent: "space-between",
     gap: 16,
-  },
-  select: {
-    minWidth: 118,
-    height: {
-      default: 29,
-      "@media (max-width: 900px)": 44,
-    },
-    paddingTop: 0,
-    paddingRight: 24,
-    paddingBottom: 0,
-    paddingLeft: 8,
-    borderColor: {
-      default: colors.line,
-      ":hover": colors.lineStrong,
-    },
-    borderRadius: 6,
-    borderStyle: "solid",
-    borderWidth: 1,
-    color: {
-      default: colors.textSecondary,
-      ":hover": colors.text,
-    },
-    backgroundColor: {
-      default: "#1d1d20",
-      ":hover": colors.surfaceHover,
-    },
-    fontSize: {
-      default: 10,
-      "@media (max-width: 900px)": 16,
-    },
   },
   colorList: {
     display: "grid",

@@ -112,6 +112,15 @@ const server = (() => {
         port,
         hostname,
         routes: {
+          "/public/*": async (request) => {
+            if (request.method !== "GET" && request.method !== "HEAD") {
+              return new Response("Method not allowed", { status: 405, headers: { Allow: "GET, HEAD" } });
+            }
+            const pathname = new URL(request.url).pathname.slice("/public".length);
+            const path = await resolveExistingAssetPath(resolve(projectRoot, "public"), pathname);
+            if (!path) return new Response("Not found", { status: 404, headers: { "Cache-Control": "no-store" } });
+            return fileResponse(path, request);
+          },
           "/stylex.dev.css": async () => {
             const file = Bun.file(`.stylex/stylex.${process.pid}.dev.css`);
             if (!(await file.exists())) return new Response("StyleX is compiling", { status: 503 });

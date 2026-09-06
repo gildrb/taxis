@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { adjustedValue, generatePattern, patternToSvg, projectFor } from "../src/model/pattern";
 import { parseProject } from "../src/model/project";
-import { createRadialSource, fingerprintPixels, isAcceptedImage, legacyFingerprintPixels, sampleSource } from "../src/model/source";
-import { DEFAULT_PARAMS, PRESETS, applyPreset, outputSizeForSource, parsePreset, projectFingerprint, legacyProjectFingerprint } from "../src/model/params";
+import { createRadialSource, fingerprintPixels, isAcceptedImage, sampleSource } from "../src/model/source";
+import { DEFAULT_PARAMS, PRESETS, applyPreset, outputSizeForSource, parsePreset, projectFingerprint } from "../src/model/params";
 import type { PatternParams, RenderInput, SourceData } from "../src/model/types";
 
 function params(overrides: Partial<PatternParams> = {}): PatternParams {
@@ -76,7 +76,7 @@ describe("deterministic pattern evaluator", () => {
   test("samples the visible midpoint of partial edge cells", () => {
     const source = grayscaleSource(1, 1, [255]);
     const frame = generatePattern(input({ preset: "candles", cellSize: 4, width: 1, height: 1, fit: "stretch" }, source));
-    expect(frame.primitives[0]).toMatchObject({ x: 0.25, width: 3.5 });
+    expect(frame.primitives[0]).toMatchObject({ x: -1.25, width: 3.5 });
   });
 
   test("does not draw custom motifs for transparent or out-of-fit samples", () => {
@@ -126,7 +126,7 @@ describe("source mapping", () => {
 
     const cover = params({ width: 100, height: 100, fit: "cover", scale: 1 });
     expect(sampleSource(source, 0, 50, cover).value).toBe(85 / 255);
-    expect(sampleSource(source, 99, 50, cover).value).toBe(170 / 255);
+    expect(sampleSource(source, 99, 50, cover).value).toBeCloseTo(169.15 / 255, 12);
 
     const stretch = params({ width: 100, height: 100, fit: "stretch", scale: 1 });
     expect(sampleSource(source, 0, 50, stretch).value).toBe(0);
@@ -143,7 +143,6 @@ describe("source mapping", () => {
   test("uses a 64-bit pixel fingerprint that separates known FNV-32 collisions", () => {
     const first = new Uint8ClampedArray([42, 228, 34, 255, 202, 29, 53, 255]);
     const second = new Uint8ClampedArray([52, 118, 155, 255, 214, 142, 21, 255]);
-    expect(legacyFingerprintPixels(2, 1, first)).toBe(legacyFingerprintPixels(2, 1, second));
     expect(fingerprintPixels(2, 1, first)).not.toBe(fingerprintPixels(2, 1, second));
     expect(fingerprintPixels(2, 1, first)).toMatch(/^[0-9a-f]{16}$/);
   });
@@ -153,7 +152,7 @@ describe("source mapping", () => {
     const auto = params({ width: 2, height: 1, fit: "stretch", sampleChannel: "auto" });
     expect(sampleSource(transparent, 0.5, 0.5, auto).value).toBe(0);
     expect(sampleSource(transparent, 1.5, 0.5, auto).value).toBe(128 / 255);
-    expect(sampleSource(source, 25, 50, params({ width: 100, height: 100, fit: "stretch", sampleChannel: "auto" })).value).toBe(85 / 255);
+    expect(sampleSource(source, 25, 50, params({ width: 100, height: 100, fit: "stretch", sampleChannel: "auto" })).value).toBe(42.5 / 255);
   });
 });
 
@@ -187,36 +186,16 @@ describe("project settings", () => {
     const exported = projectFor(input({}, createRadialSource(4)));
     const parsed = parseProject(exported);
     expect(parsed.fingerprint).toBe(exported.fingerprint);
-    expect(parsed.version).toBe(2);
+    expect(parsed.version).toBe(3);
     expect(parsed.source?.size).toBe(4);
     expect(parseProject({ params: { cellSize: 24 } }).source).toBeUndefined();
-    expect(() => parseProject({ ...exported, version: 3 })).toThrow("version is not supported");
+    expect(() => parseProject({ ...exported, version: 4 })).toThrow("version is not supported");
     expect(() => parseProject({ ...exported, params: null })).toThrow("valid pattern settings");
     expect(() => parseProject({ ...exported, fingerprint: exported.fingerprint.toUpperCase() })).toThrow("project fingerprint");
     expect(() => parseProject({ ...exported, source: { ...exported.source, dataUrl: 42 } })).toThrow("image data URL");
   });
 
-  test("rejects partial envelopes and preserves legacy fingerprint serialization", () => {
-    const source = createRadialSource(4);
-    const legacySource = legacyFingerprintPixels(source.width, source.height, source.pixels);
-    const legacyParams: PatternParams = {
-      ...params(),
-      contrast: 1.2345,
-      backgroundColor: "#F7F6F3",
-      monoColor: "#F5F5F0",
-      colors: ["#F7F6F3", "#B7B6B2", "#6F6E6A", "#1D1C1A"],
-    };
-    const legacy = {
-      app: "Pattern Lab",
-      version: 1,
-      fingerprint: legacyProjectFingerprint(legacyParams, legacySource),
-      params: legacyParams,
-      source: { name: source.name, fingerprint: legacySource, kind: "radial" },
-    };
-    const parsed = parseProject(legacy);
-    expect(legacyProjectFingerprint(parsed.legacyParams!, legacySource)).toBe(legacy.fingerprint);
-    expect(parsed.params.backgroundColor).toBe("#f7f6f3");
-    expect(parsed.params.contrast).toBe(1.23);
+  test("rejects partial project envelopes", () => {
     const { app: _app, ...partialEnvelope } = projectFor(input());
     expect(() => parseProject(partialEnvelope)).toThrow("app marker");
   });

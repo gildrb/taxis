@@ -59,6 +59,7 @@ test("keeps pending numeric edits separate from range and color transactions", a
   await cellValue.pressSequentially("60");
 
   const contrast = page.getByRole("slider", { name: "Contrast" });
+  await contrast.scrollIntoViewIfNeeded();
   const box = await contrast.boundingBox();
   expect(box).not.toBeNull();
   const y = (box?.y ?? 0) + (box?.height ?? 0) / 2;
@@ -135,7 +136,7 @@ test("fills a resized canvas instead of containing the pattern in the old source
 
 test("preserves a non-square source and exposes fit controls", async ({ page }) => {
   await page.goto("/");
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="400" height="100" viewBox="0 0 400 100"><rect width="400" height="100" fill="white"/><text x="20" y="65" font-size="52" fill="black">RASTER</text></svg>`;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="400" height="100" viewBox="0 0 400 100"><rect width="400" height="100" fill="white"/><path fill="black" d="M20 20H70V80H20Z M95 20H145V80H95Z M170 20H220V80H170Z M245 20H295V80H245Z M320 20H380V80H320Z"/></svg>`;
   const sourceInput = page.locator('input[type="file"][accept*=".avif"]');
   await sourceInput.setInputFiles({
     name: "wide.svg",
@@ -197,7 +198,7 @@ test("exports matching SVG, PNG, and restorable project data", async ({ page }) 
   const jsonPath = await (await jsonPending).path();
   const project = JSON.parse(await readFile(jsonPath!, "utf8"));
   expect(project.app).toBe("Pattern Lab");
-  expect(project.version).toBe(2);
+  expect(project.version).toBe(3);
   expect(project.fingerprint).toMatch(/^[0-9a-f]{16}$/);
   expect(project.source.kind).toBe("radial");
 });
@@ -214,7 +215,7 @@ test("rejects unsupported or malformed project envelopes without changing the sc
   await projectInput.setInputFiles({
     name: "future.json",
     mimeType: "application/json",
-    buffer: Buffer.from(JSON.stringify({ ...project, version: 3 })),
+    buffer: Buffer.from(JSON.stringify({ ...project, version: 4 })),
   });
   await expect(page.locator('[role="status"][aria-live]')).toContainText("version is not supported");
   await expect(page.getByTestId("fingerprint")).toHaveText(initialFingerprint ?? "");
@@ -275,19 +276,19 @@ test("keeps the canvas and bottom-sheet controls usable on mobile", async ({ pag
   await page.getByRole("tab", { name: "Source", exact: true }).click();
   await expect.poll(() => propertiesScroll.evaluate((element) => element.scrollTop)).toBe(0);
   await expect(page.getByTestId("source-summary")).toBeVisible();
-  await expect(page.getByLabel("Sample")).toBeVisible();
+  await expect(page.getByRole("combobox", { name: "Sample", exact: true })).toBeVisible();
   await page.getByRole("tab", { name: "Canvas", exact: true }).click();
   await expect(page.getByLabel("Width")).toBeVisible();
   await expect(page.getByRole("button", { name: /Export PNG/ })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   for (const viewport of [{ width: 390, height: 844 }, { width: 375, height: 667 }]) {
     await page.setViewportSize(viewport);
-    const box = await page.getByTestId("canvas-frame").boundingBox();
-    expect(box).not.toBeNull();
-    expect(Math.abs((box?.width ?? 0) - (box?.height ?? 0))).toBeLessThan(1);
-    const properties = await page.getByLabel("Properties").boundingBox();
-    expect(properties).not.toBeNull();
-    expect((box?.y ?? 0) + (box?.height ?? 0)).toBeLessThanOrEqual((properties?.y ?? 0) - 4);
+    await expect.poll(async () => {
+      const box = await page.getByTestId("canvas-frame").boundingBox();
+      const properties = await page.getByLabel("Properties").boundingBox();
+      if (!box || !properties) return false;
+      return Math.abs(box.width - box.height) < 1 && box.y + box.height <= properties.y - 4;
+    }).toBe(true);
   }
 });
 
@@ -566,4 +567,17 @@ test("restores each Properties panel scroll position through Back and Forward", 
   await page.goForward();
   await expect(page.getByRole("tab", { name: "Source", exact: true })).toHaveAttribute("aria-selected", "true");
   await expect.poll(() => scroll.evaluate((element) => element.scrollTop)).toBeGreaterThan(40);
+});
+
+
+test("rejects unsupported SVG text without changing the scene", async ({ page }) => {
+  await page.goto("/");
+  await page.waitForFunction(() => Boolean(window.taxis));
+  const initial = await page.evaluate(() => window.taxis.getScene());
+  await page.locator('input[name="source-image"]').setInputFiles({
+    name: "text.svg", mimeType: "image/svg+xml",
+    buffer: Buffer.from('<svg width="400" height="100"><text x="20" y="60">Convert text to paths</text></svg>'),
+  });
+  await expect(page.locator('[role="status"][aria-live]')).toContainText(/text.*not supported|unsupported.*text/i);
+  expect(await page.evaluate(() => window.taxis.getScene())).toEqual(initial);
 });
