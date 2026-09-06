@@ -13,6 +13,9 @@ interface PreviewProps {
   zoom: number;
   playing: boolean;
   onFrameTime: (time: number) => void;
+  onPlaybackEnd?: () => void;
+  playbackEnd?: number;
+  timelineOpen?: boolean;
   selection?: PatternPrimitive;
   onPickCell?: (x: number, y: number) => void;
   onStepCell?: (column: number, row: number) => void;
@@ -22,7 +25,7 @@ interface PreviewProps {
   onError: (message?: string) => void;
 }
 
-export function Preview({ renderer, params, source, zoom, playing, onFrameTime, selection, onPickCell, onStepCell, onClearCell, onFile, onChooseSource, onError }: PreviewProps) {
+export function Preview({ renderer, params, source, zoom, playing, onFrameTime, onPlaybackEnd, playbackEnd = 86400, timelineOpen = false, selection, onPickCell, onStepCell, onClearCell, onFile, onChooseSource, onError }: PreviewProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const stageRef = useRef<HTMLElement>(null);
   const [frameSize, setFrameSize] = useState<{ height: number; width: number }>();
@@ -51,7 +54,7 @@ export function Preview({ renderer, params, source, zoom, playing, onFrameTime, 
       observer.disconnect();
       window.removeEventListener("resize", update);
     };
-  }, [rendered.height, rendered.width]);
+  }, [rendered.height, rendered.width, timelineOpen]);
 
   const hasFrame = frameSize !== undefined;
   useEffect(() => {
@@ -84,9 +87,9 @@ export function Preview({ renderer, params, source, zoom, playing, onFrameTime, 
     const tick = (timestamp: number) => {
       if (previousTime !== undefined && !document.hidden) elapsed += timestamp - previousTime;
       previousTime = document.hidden ? undefined : timestamp;
-      const time = Number(Math.min(86_400, params.animationTime + elapsed / 1000).toFixed(6));
+      const time = Number(Math.min(playbackEnd, params.animationTime + elapsed / 1000).toFixed(6));
       if (time !== renderedTime && !render(time)) return;
-      if (time === 86_400) { onError("The timeline reached 24 hours. Restart the animation to continue."); return; }
+      if (time === playbackEnd) { onPlaybackEnd?.(); return; }
       request = requestAnimationFrame(tick);
     };
     const visibilityChanged = () => { previousTime = undefined; };
@@ -96,7 +99,7 @@ export function Preview({ renderer, params, source, zoom, playing, onFrameTime, 
       cancelAnimationFrame(request);
       document.removeEventListener("visibilitychange", visibilityChanged);
     };
-  }, [hasFrame, onError, onFrameTime, params, playing, renderer, source]);
+  }, [hasFrame, onError, onFrameTime, onPlaybackEnd, playbackEnd, params, playing, renderer, source]);
 
   const accept = (file?: File) => {
     if (file) onFile(file);
@@ -105,7 +108,7 @@ export function Preview({ renderer, params, source, zoom, playing, onFrameTime, 
 
   return (
     <section
-      {...stylex.props(previewStyles.stage)}
+      {...stylex.props(previewStyles.stage, timelineOpen && previewStyles.withTimeline)}
       ref={stageRef}
       aria-label={zoom > 1 ? "Pattern canvas viewport; use arrow keys to pan" : "Pattern canvas"}
       tabIndex={zoom > 1 ? 0 : -1}
@@ -161,12 +164,12 @@ export function Preview({ renderer, params, source, zoom, playing, onFrameTime, 
           </div>
         </div>
       )}
-      <div {...stylex.props(previewStyles.canvasInfo)} aria-hidden="true">
+      <div {...stylex.props(previewStyles.canvasInfo, timelineOpen && previewStyles.infoWithTimeline)} aria-hidden="true">
         <span>{rendered.width} × {rendered.height}</span>
         <span>{rendered.useCells ? `${rendered.cellShape} cells` : { bars: "Horizontal raster", candles: "Vertical raster", shapes: "Shape mosaic", stripes: "Uniform stripes", radial: "Radial rays", rings: "Concentric rings" }[rendered.preset]}</span>
         {playing && <span>Playing</span>}
       </div>
-      <button {...stylex.props(previewStyles.changeSource)} type="button" aria-label={`Replace source image (${source.name})`} onClick={onChooseSource}>
+      <button {...stylex.props(previewStyles.changeSource, timelineOpen && previewStyles.sourceWithTimeline)} type="button" aria-label={`Replace source image (${source.name})`} onClick={onChooseSource}>
         <Icon name="image" size={14} /> {source.name}
       </button>
       {dragging && (

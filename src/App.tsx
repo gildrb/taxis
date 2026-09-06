@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Controls, type PanelSelection } from "./components/Controls";
 import { Icon } from "./components/Icon";
 import { Preview } from "./components/Preview";
+import { Timeline } from "./components/Timeline";
 import { ExportMenu, type ExportRequest } from "./components/ExportMenu";
 import { exportScene, getExportSupport, type ExportFormat, type ExportSupport } from "./export/encode";
 import { downloadBlob, downloadText } from "./export/download";
@@ -11,6 +12,7 @@ import { generatePattern, projectFor } from "./model/pattern";
 import type { TaxisApi } from "./api";
 import { fingerprintText } from "./model/fingerprint";
 import { parseProject } from "./model/project";
+import { readSceneSettings, writeSceneSettings } from "./model/scene-link";
 import { createRadialSource, dataUrlToSource, fileToSource } from "./model/source";
 import { DEFAULT_PARAMS, PARAMETER_SCHEMA, applyPreset, outputSizeForSource, parsePreset, projectFingerprint, type PatternRecipe } from "./model/params";
 import type { PatternParams, SourceData } from "./model/types";
@@ -43,6 +45,12 @@ function parseZoom(value: string | null): number {
   return Math.round(Math.min(2, Math.max(0.5, parsed)) * 10) / 10;
 }
 
+function hasSceneMotion(params: PatternParams): boolean {
+  if (params.animation !== "none") return true;
+  if (!params.useCells) return false;
+  return params.keyframeTracks.length > 0 || params.cellAnimations.some((cell) => cell.animation !== undefined && cell.animation !== "none");
+}
+
 function parseCellSelection(value: string | null): string | undefined {
   const match = /^cell:(0|[1-9]\d*):(0|[1-9]\d*):(0|[1-9]\d*)$/.exec(value ?? "");
   if (!match || Number(match[1]) >= 144 || Number(match[2]) >= 1024 || Number(match[3]) >= 1024) return undefined;
@@ -68,8 +76,7 @@ export default function App({ renderer }: { renderer: SvgRenderer }) {
   }, []);
   const initialSettings = useMemo(() => {
     try {
-      const encoded = new URLSearchParams(window.location.search).get("settings");
-      return { params: encoded ? parsePreset(JSON.parse(encoded)) : DEFAULT_PARAMS, invalid: false };
+      return { params: readSceneSettings(new URL(window.location.href)) ?? DEFAULT_PARAMS, invalid: false };
     } catch {
       return { params: DEFAULT_PARAMS, invalid: true };
     }
@@ -105,12 +112,16 @@ export default function App({ renderer }: { renderer: SvgRenderer }) {
   const lastUrlSignatureRef = useRef<string | undefined>(undefined);
   const preserveInitialInvalidUrlRef = useRef(initialSettings.invalid);
   const urlGroupTimerRef = useRef<number | undefined>(undefined);
+  const unlinkedSettingsRef = useRef(false);
   const [selected, setSelected] = useState<PanelSelection>(() => {
     const panel = new URLSearchParams(window.location.search).get("panel");
     return panel === "source" || panel === "canvas" ? panel : "pattern";
   });
   const [zoom, setZoom] = useState(() => parseZoom(new URLSearchParams(window.location.search).get("zoom")));
   const [selectedCellId, setSelectedCellId] = useState(() => parseCellSelection(new URLSearchParams(window.location.search).get("cell")));
+  const [timelineOpen, setTimelineOpen] = useState(() => new URLSearchParams(window.location.search).get("timeline") === "1");
+  const timelineButtonRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => { if (!history.params.useCells) setTimelineOpen(false); }, [history.params.useCells]);
   const [notice, setNoticeState] = useState<{ id: number; message: string } | undefined>(() => initialSettings.invalid
     ? { id: 1, message: "This link does not contain valid Taxis settings." }
     : undefined);
@@ -168,15 +179,14 @@ export default function App({ renderer }: { renderer: SvgRenderer }) {
     const sourceUsesAlpha = unresolvedSource ? unresolvedSource.usesAlpha : source.usesAlpha;
     const radialSize = unresolvedSource ? unresolvedSource.radialSize : source.kind === "radial" ? source.width : undefined;
     const sourceVector = unresolvedSource ? unresolvedSource.vectorFingerprint : vectorFingerprint;
-    const signature = JSON.stringify([history.params, sourceFingerprint, sourceUsesAlpha ?? null, radialSize ?? null, sourceVector ?? null, selected, zoom, selectedCellId]);
+    const signature = JSON.stringify([history.params, sourceFingerprint, sourceUsesAlpha ?? null, radialSize ?? null, sourceVector ?? null, selected, zoom, selectedCellId, timelineOpen]);
     if (preserveInitialInvalidUrlRef.current) {
       preserveInitialInvalidUrlRef.current = false;
       lastUrlSignatureRef.current = signature;
       return;
     }
     if (signature === lastUrlSignatureRef.current) return;
-    const url = new URL(window.location.href);
-    url.searchParams.set("settings", JSON.stringify(history.params));
+    let url = new URL(window.location.href);
     url.searchParams.set("source", sourceFingerprint);
     if (sourceVector) url.searchParams.set("sourceVector", sourceVector);
     else url.searchParams.delete("sourceVector");
@@ -195,22 +205,32 @@ export default function App({ renderer }: { renderer: SvgRenderer }) {
     else url.searchParams.set("zoom", zoom.toFixed(1));
     if (selectedCellId) url.searchParams.set("cell", selectedCellId);
     else url.searchParams.delete("cell");
+    if (timelineOpen) url.searchParams.set("timeline", "1");
+    else url.searchParams.delete("timeline");
 
-    const initialized = lastUrlSignatureRef.current !== undefined;
-    if (!initialized) {
-      window.history.replaceState(null, "", url);
+    try {
+      url = writeSceneSettings(url, history.params);
+      const initialized = lastUrlSignatureRef.current !== undefined;
+      if (!initialized) {
+        window.history.replaceState(null, "", url);
+        lastUrlSignatureRef.current = signature;
+        return;
+      }
+      window.history[urlGroupTimerRef.current === undefined ? "pushState" : "replaceState"](null, "", url);
       lastUrlSignatureRef.current = signature;
-      return;
+      if (urlGroupTimerRef.current !== undefined) window.clearTimeout(urlGroupTimerRef.current);
+      urlGroupTimerRef.current = window.setTimeout(() => { urlGroupTimerRef.current = undefined; }, 400);
+      unlinkedSettingsRef.current = false;
+    } catch (error) {
+      unlinkedSettingsRef.current = true;
+      lastUrlSignatureRef.current = signature;
+      setNotice(error instanceof Error ? error.message : "Scene link could not be saved. Export Project JSON to preserve this scene.");
     }
-    window.history[urlGroupTimerRef.current === undefined ? "pushState" : "replaceState"](null, "", url);
-    lastUrlSignatureRef.current = signature;
-    if (urlGroupTimerRef.current !== undefined) window.clearTimeout(urlGroupTimerRef.current);
-    urlGroupTimerRef.current = window.setTimeout(() => { urlGroupTimerRef.current = undefined; }, 400);
-  }, [history.params, selected, source.fingerprint, source.kind, source.usesAlpha, unresolvedSource, vectorFingerprint, zoom, selectedCellId]);
+  }, [history.params, selected, source.fingerprint, source.kind, source.usesAlpha, unresolvedSource, vectorFingerprint, zoom, selectedCellId, timelineOpen]);
 
   useEffect(() => {
-    if (source.kind === "radial") return;
     const warn = (event: BeforeUnloadEvent) => {
+      if (source.kind === "radial" && !unlinkedSettingsRef.current) return;
       event.preventDefault();
       event.returnValue = "";
     };
@@ -237,8 +257,7 @@ export default function App({ renderer }: { renderer: SvgRenderer }) {
     const restore = () => {
       try {
         const query = new URLSearchParams(window.location.search);
-        const encoded = query.get("settings");
-        const nextParams = encoded ? parsePreset(JSON.parse(encoded)) : DEFAULT_PARAMS;
+        const nextParams = readSceneSettings(new URL(window.location.href)) ?? DEFAULT_PARAMS;
         const panel = query.get("panel");
         const nextPanel: PanelSelection = panel === "source" || panel === "canvas" ? panel : "pattern";
         const nextZoom = parseZoom(query.get("zoom"));
@@ -272,7 +291,9 @@ export default function App({ renderer }: { renderer: SvgRenderer }) {
         setZoom(nextZoom);
         const nextCell = parseCellSelection(query.get("cell"));
         setSelectedCellId(nextCell);
-        lastUrlSignatureRef.current = JSON.stringify([nextParams, linkedFingerprint, linkedUsesAlpha ?? cachedSource?.usesAlpha ?? null, linkedRadialSize ?? (cachedSource?.kind === "radial" ? cachedSource.width : null), linkedVector ?? null, nextPanel, nextZoom, nextCell]);
+        const nextTimeline = query.get("timeline") === "1" && nextParams.useCells;
+        setTimelineOpen(nextTimeline);
+        lastUrlSignatureRef.current = JSON.stringify([nextParams, linkedFingerprint, linkedUsesAlpha ?? cachedSource?.usesAlpha ?? null, linkedRadialSize ?? (cachedSource?.kind === "radial" ? cachedSource.width : null), linkedVector ?? null, nextPanel, nextZoom, nextCell, nextTimeline]);
         if (urlGroupTimerRef.current !== undefined) window.clearTimeout(urlGroupTimerRef.current);
         urlGroupTimerRef.current = undefined;
       } catch {
@@ -283,7 +304,8 @@ export default function App({ renderer }: { renderer: SvgRenderer }) {
     return () => window.removeEventListener("popstate", restore);
   }, [history.commit, history.commitScene, history.endTransaction, initialSource.fingerprint, markParamChanges, setNotice]);
 
-  const hasAnimation = history.params.animation !== "none" || (history.params.useCells && history.params.cellAnimations.some((cell) => cell.animation !== undefined && cell.animation !== "none"));
+  const hasAnimation = hasSceneMotion(history.params) || (timelineOpen && history.params.useCells);
+  const playbackEnd = history.params.useCells && (timelineOpen || history.params.keyframeTracks.length > 0) && !history.params.keyframeLoop ? history.params.keyframeDuration : 86400;
   const cellEntities = useMemo(() => {
     if (!history.params.useCells) return [];
     try { return generatePattern({ params: history.params, source }).entities ?? []; }
@@ -359,6 +381,14 @@ export default function App({ renderer }: { renderer: SvgRenderer }) {
     }
   }, []);
 
+  const togglePlayback = useCallback(() => {
+    if (playing) { pausePlayback(); return; }
+    if (!hasAnimation || renderError) return;
+    if (paramsRef.current.animationTime >= playbackEnd) commitParams({ animationTime: 0 });
+    history.endTransaction();
+    setPlaying(true);
+  }, [playing, pausePlayback, hasAnimation, renderError, playbackEnd, commitParams, history.endTransaction]);
+
   const reportPlaybackTime = useCallback((time: number) => {
     playbackTimeRef.current = time;
   }, []);
@@ -415,7 +445,9 @@ export default function App({ renderer }: { renderer: SvgRenderer }) {
     if (request.format !== "json" && renderError) { setExportError(renderError); return; }
     const controller = new AbortController();
     exportControllerRef.current = controller;
-    const exportParams = pausePlayback();
+    const pausedParams = pausePlayback();
+    const fullClip = (request.format === "mp4" || request.format === "webm") && pausedParams.useCells && pausedParams.keyframeTracks.length > 0;
+    const exportParams = fullClip ? { ...pausedParams, animationTime: 0 } : pausedParams;
     const exportSource = sourceRef.current;
     const exportFingerprint = projectFingerprint(exportParams, exportSource);
     setBusy(request.format);
@@ -588,6 +620,9 @@ export default function App({ renderer }: { renderer: SvgRenderer }) {
         zoom={zoom}
         playing={playing}
         onFrameTime={reportPlaybackTime}
+        onPlaybackEnd={pausePlayback}
+        playbackEnd={playbackEnd}
+        timelineOpen={timelineOpen}
         selection={cellEntities.find((entity) => entity.id === selectedCellId && entity.visible)?.primitive ?? undefined}
         onPickCell={history.params.useCells && !renderError ? pickCell : undefined}
         onStepCell={history.params.useCells && !renderError ? stepCell : undefined}
@@ -597,6 +632,7 @@ export default function App({ renderer }: { renderer: SvgRenderer }) {
         onError={reportRenderError}
       />
 
+      <div {...stylex.props(appStyles.propertiesContainer, timelineOpen && appStyles.propertiesHiddenForTimeline)}>
       <Controls
         entities={cellEntities}
         selectedCellId={selectedCellId}
@@ -611,23 +647,37 @@ export default function App({ renderer }: { renderer: SvgRenderer }) {
         onSelect={setSelected}
         onPreset={applyRecipe}
         playing={playing}
-        onTogglePlayback={hasAnimation && !renderError ? () => {
-          if (playing) pausePlayback();
-          else {
-            history.endTransaction();
-            setPlaying(true);
-          }
-        } : undefined}
+        onTogglePlayback={hasAnimation && !renderError ? togglePlayback : undefined}
         onResetPlayback={() => { commitParams({ animationTime: 0, animationPhase: 0 }); }}
         onChooseSource={() => sourceInputRef.current?.click()}
       />
+      </div>
+      {timelineOpen && <div id="cell-timeline" {...stylex.props(appStyles.timelineDock)}>
+        <Timeline
+          params={history.params}
+          selectedCellId={selectedCellId}
+          playing={playing}
+          getTime={() => playing ? playbackTimeRef.current : paramsRef.current.animationTime}
+          onPatch={(patch) => {
+            const resume = playing;
+            const next = commitParams(patch).params;
+            if (resume && (hasSceneMotion(next) || (timelineOpen && next.useCells))) setPlaying(true);
+          }}
+          onSeek={(time) => { commitParams({ animationTime: time }); }}
+          onTogglePlayback={togglePlayback}
+          onClose={() => { pausePlayback(); setTimelineOpen(false); requestAnimationFrame(() => timelineButtonRef.current?.focus()); }}
+          onInteractionStart={history.beginTransaction}
+          onInteractionEnd={history.endTransaction}
+        />
+      </div>}
 
       <footer {...stylex.props(sharedStyles.glassPanel, appStyles.exportToolbar)}>
         <span {...stylex.props(appStyles.toolbarSeparator, appStyles.mobileToolbarSeparator)} aria-hidden="true" />
         <button {...stylex.props(appStyles.exportButton)} type="button" onClick={() => projectInputRef.current?.click()}><Icon name="folder" size={14} /> Open Project</button>
+        <button {...stylex.props(appStyles.exportButton, timelineOpen && appStyles.timelineButtonActive)} ref={timelineButtonRef} type="button" aria-expanded={timelineOpen} aria-controls={timelineOpen ? "cell-timeline" : undefined} disabled={!history.params.useCells} onClick={() => { pausePlayback(); setTimelineOpen((open) => !open); }}>Timeline</button>
         <ExportMenu
           capabilities={{ ...Object.fromEntries(Object.entries(exportCapabilities).map(([format, support]) => [format, renderError ? { supported: false, reason: renderError } : support])), json: { supported: true } }}
-          animationDuration={history.params.animationDuration}
+          animationDuration={history.params.useCells && history.params.keyframeTracks.length > 0 ? history.params.keyframeDuration : history.params.animationDuration}
           backgroundColor={history.params.backgroundColor}
           busy={Boolean(busy)}
           progress={exportProgress}

@@ -12,8 +12,9 @@ export type { SvgDocument, SvgRaster, SvgRenderer } from "./render/native";
 export { DEFAULT_PARAMS, PARAMETER_SCHEMA, parsePreset, projectFingerprint } from "./model/params";
 export { generatePattern, patternToSvg, projectFor } from "./model/pattern";
 export { createRadialSource, dataUrlToSource, fileToSource, parseVectorMask, pixelsToSource } from "./model/source";
+export { createKeyframeEvaluator, KEYFRAME_LIMITS, KEYFRAME_PROPERTIES, KEYFRAME_VALUE_RANGES } from "./model/keyframes";
 export { parseProject } from "./model/project";
-export type { CellAnimationOverride, CellEntity, CellShape, LayoutCellOverride, MaskShape, PatternParams, PatternFrame, PatternProject, RenderInput, SourceData, VectorMask } from "./model/types";
+export type { AnimationKeyframe, KeyframeEasing, KeyframePose, KeyframeProperty, KeyframeTrack, CellAnimationOverride, CellEntity, CellShape, LayoutCellOverride, MaskShape, PatternParams, PatternFrame, PatternProject, RenderInput, SourceData, VectorMask } from "./model/types";
 
 export interface TaxisApi {
   version: 1;
